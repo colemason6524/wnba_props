@@ -202,6 +202,113 @@ def render_line_board(
     return "\n".join(_render_rows(headers, rows, empty_message="No prop lines were available for the board."))
 
 
+def render_discord_embeds(
+    candidates: Iterable[Candidate],
+    screen_date,
+    games_count: int,
+    prop_line_count: int,
+    qualified_count: int,
+    displayed_count: int,
+    line_source: str,
+    bookmaker: str,
+    min_score: int = 8,
+    limit: int = 8,
+) -> list[dict]:
+    items = sorted(
+        [candidate for candidate in candidates if candidate.score >= min_score],
+        key=_discord_sort_key,
+        reverse=True,
+    )
+    overs = [candidate for candidate in items if candidate.side == "OVER"][:limit]
+    unders = [candidate for candidate in items if candidate.side == "UNDER"][:limit]
+    description = (
+        f"{prop_line_count} lines across {games_count} games. "
+        f"{qualified_count} qualified, {displayed_count} shown on board. "
+        f"Source `{line_source}` / `{bookmaker}`. Discord cutoff `{min_score}+`."
+    )
+    embed = {
+        "title": f"WNBA Props - {screen_date}",
+        "description": description,
+        "color": _discord_embed_color(overs, unders),
+        "fields": [],
+        "footer": {"text": "Confirm active status, game time, and current line before locking. Saved by scheduled pregame run."},
+    }
+
+    if not overs and not unders:
+        embed["fields"].append(
+            {
+                "name": "No Discord plays",
+                "value": f"No props cleared the Discord score cutoff of {min_score}.",
+                "inline": False,
+            }
+        )
+        return [embed]
+
+    _append_discord_section(embed, "Top Overs", "Over", overs)
+    _append_discord_section(embed, "Top Unders", "Under", unders)
+    return [embed]
+
+
+def _append_discord_section(embed: dict, title: str, item_label: str, candidates: list[Candidate]) -> None:
+    if not candidates:
+        embed["fields"].append({"name": title, "value": "No plays cleared the cutoff.", "inline": False})
+        return
+
+    for candidate in candidates:
+        embed["fields"].append(
+            {
+                "name": (
+                    f"{item_label} | {candidate.player_name} "
+                    f"{candidate.side} {candidate.line:.1f} {candidate.prop_type} - Score {candidate.score}"
+                ),
+                "value": _discord_candidate_value(candidate),
+                "inline": False,
+            }
+        )
+
+
+def _discord_candidate_value(candidate: Candidate) -> str:
+    flags = ", ".join(_display_flag(flag) for flag in candidate.flags[:6]) or "-"
+    matchup = f"OppAvg `{candidate.opp_avg:.1f}`" if candidate.opp_avg is not None else "OppAvg `-`"
+    market = []
+    if candidate.spread is not None:
+        market.append(f"Spread `{candidate.spread:+.1f}`")
+    if candidate.total is not None:
+        market.append(f"Total `{candidate.total:.1f}`")
+    market_text = " | ".join(market) if market else "Market `-`"
+    return (
+        f"{candidate.team} vs {candidate.opponent} | {candidate.bookmaker}\n"
+        f"L5 `{candidate.hits_last_5}/{candidate.played_last_5}` | "
+        f"L10 `{candidate.hits_last_10}/{candidate.played_last_10}` | "
+        f"Avg L5 `{candidate.avg_last_5:.1f}` | Avg L10 `{candidate.avg_last_10:.1f}` | "
+        f"Season `{candidate.season_avg:.1f}`\n"
+        f"Delta L5 `{candidate.delta_avg_last_5:+.1f}` | Min L5 `{candidate.avg_minutes_last_5:.1f}` | "
+        f"{matchup} | {market_text}\n"
+        f"Flags: `{flags}`"
+    )
+
+
+def _discord_sort_key(candidate: Candidate) -> tuple[int, int, float, int, float, float]:
+    return (
+        candidate.score,
+        candidate.hits_last_5,
+        candidate.delta_avg_last_5,
+        candidate.hits_last_10,
+        candidate.avg_minutes_last_5,
+        -candidate.line,
+    )
+
+
+def _discord_embed_color(overs: list[Candidate], unders: list[Candidate]) -> int:
+    if overs and unders:
+        return 0x2F80ED
+    if overs:
+        return 0x27AE60
+    if unders:
+        return 0x9B51E0
+    return 0x828282
+
+
 def _render_rows(headers: list[str], rows: list[list[str]], empty_message: str) -> list[str]:
     widths = [len(header) for header in headers]
     for row in rows:

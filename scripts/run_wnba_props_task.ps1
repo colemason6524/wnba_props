@@ -97,6 +97,7 @@ try {
     $env:PYTHONPYCACHEPREFIX = ".pycache"
     $env:LINE_SOURCE = "playerprops"
     $env:PLAYERPROPS_BOOK = $PlayerPropsBook
+    $env:SEND_DISCORD = "true"
     $env:RUN_NOTE = $RunNote
 
     Write-TaskLog "Python version:"

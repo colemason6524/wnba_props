@@ -14,6 +14,10 @@ cd "$PROJECT_DIR" || exit 1
   PYTHONPYCACHEPREFIX=.pycache \
   LINE_SOURCE="${LINE_SOURCE:-playerprops}" \
   PLAYERPROPS_BOOK="${PLAYERPROPS_BOOK:-FANDUEL}" \
+  SEND_DISCORD="${SEND_DISCORD:-false}" \
+  DISCORD_WEBHOOK_URL="${DISCORD_WEBHOOK_URL:-}" \
+  DISCORD_MIN_SCORE="${DISCORD_MIN_SCORE:-8}" \
+  DISCORD_LIMIT="${DISCORD_LIMIT:-8}" \
   /usr/bin/python3 run_nightly.py
   status=$?
   echo "===== Finished with status $status: $(date '+%Y-%m-%d %H:%M:%S %Z') ====="

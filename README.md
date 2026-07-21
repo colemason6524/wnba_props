@@ -15,6 +15,7 @@ Numbers-first nightly WNBA prop screener for common over markets.
 - fetches recent player game logs from Basketball-Reference
 - applies the screening model and context flags
 - prints a ranked terminal table
+- optionally sends a Discord digest for picks above a stricter notification cutoff
 
 ## Requirements
 
@@ -89,6 +90,14 @@ Remove legacy top-level cache files:
 python3 run_nightly.py --cache-clean
 ```
 
+Send the daily picks digest to Discord:
+
+```bash
+SEND_DISCORD=true DISCORD_WEBHOOK_URL=your_discord_webhook_url python3 run_nightly.py
+```
+
+Discord defaults to `DISCORD_MIN_SCORE=8` and `DISCORD_LIMIT=8` per side, while the terminal board still uses `MIN_DISPLAY_SCORE=7` unless changed.
+
 ## Daily Automation
 
 The project is ready for daily collection once the normal run completes and writes a history file.
@@ -114,11 +123,19 @@ Every successful nightly screen writes the backtest-ready JSON snapshot to:
 outputs\history\
 ```
 
+Store the Discord webhook once for the Windows user that runs the scheduled task:
+
+```powershell
+setx DISCORD_WEBHOOK_URL "your_discord_webhook_url"
+```
+
+Open a new PowerShell window after `setx` before testing. The scheduled wrapper opts into Discord with `SEND_DISCORD=true`; if the webhook is missing, the run still completes and logs a notification failure.
+
 Task Scheduler setup:
 
 - Program/script: `C:\Users\muski\wnba_props\scripts\run_wnba_props_task.cmd`
 - Start in: `C:\Users\muski\wnba_props`
-- Schedule: daily, pregame window such as 5:30 PM local time
+- Schedule: daily, pregame window such as 11:00 AM local time
 
 PowerShell setup from the terminal:
 
@@ -128,7 +145,7 @@ $Action = New-ScheduledTaskAction `
   -Argument '/c "C:\Users\muski\wnba_props\scripts\run_wnba_props_task.cmd"' `
   -WorkingDirectory "C:\Users\muski\wnba_props"
 
-$Trigger = New-ScheduledTaskTrigger -Daily -At 5:30PM
+$Trigger = New-ScheduledTaskTrigger -Daily -At 11:00AM
 
 $Settings = New-ScheduledTaskSettingsSet `
   -StartWhenAvailable `
@@ -217,6 +234,10 @@ export PREGAME_ONLY=true
 export STICKY_DAILY_LOG_CACHE=true
 export EXPORT_HISTORY=false
 export MIN_DISPLAY_SCORE=7
+export SEND_DISCORD=false
+export DISCORD_WEBHOOK_URL=your_discord_webhook_url
+export DISCORD_MIN_SCORE=8
+export DISCORD_LIMIT=8
 export LINE_SOURCE=playerprops
 export PLAYERPROPS_BOOK=FANDUEL
 export BREF_REQUEST_INTERVAL_SECONDS=6.0

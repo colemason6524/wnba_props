@@ -114,6 +114,10 @@ class Settings:
     sticky_daily_log_cache: bool = True
     export_history: bool = False
     min_display_score: int = 7
+    send_discord: bool = False
+    discord_webhook_url: str = ""
+    discord_min_score: int = 8
+    discord_limit: int = 8
 
 
 def load_settings() -> Settings:
@@ -154,4 +158,8 @@ def load_settings() -> Settings:
         sticky_daily_log_cache=os.environ.get("STICKY_DAILY_LOG_CACHE", "true").strip().lower() not in {"0", "false", "no"},
         export_history=os.environ.get("EXPORT_HISTORY", "false").strip().lower() in {"1", "true", "yes"},
         min_display_score=int(os.environ.get("MIN_DISPLAY_SCORE", "7")),
+        send_discord=os.environ.get("SEND_DISCORD", "false").strip().lower() in {"1", "true", "yes"},
+        discord_webhook_url=os.environ.get("DISCORD_WEBHOOK_URL", "").strip(),
+        discord_min_score=int(os.environ.get("DISCORD_MIN_SCORE", "8")),
+        discord_limit=int(os.environ.get("DISCORD_LIMIT", "8")),
     )

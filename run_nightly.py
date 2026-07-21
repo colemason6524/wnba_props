@@ -10,7 +10,8 @@ from statistics import mean
 
 from wnba_props.cache import JsonCache
 from wnba_props.config import CACHE_DIR, OUTPUTS_DIR, load_settings
-from wnba_props.output import render_candidates, render_line_board
+from wnba_props.notifiers.discord import send_discord_embeds
+from wnba_props.output import render_candidates, render_discord_embeds, render_line_board
 from wnba_props.screener import screen_candidates, summarize_return_context
 from wnba_props.sources.basketball_reference import BasketballReferenceSource
 from wnba_props.sources.draftkings import DraftKingsSource
@@ -520,6 +521,26 @@ def main() -> int:
                 print(f"- {failure}")
             if len(line_source.failures) > 20:
                 print(f"- ... and {len(line_source.failures) - 20} more")
+
+        if settings.send_discord:
+            embeds = render_discord_embeds(
+                screening_result.candidates,
+                screen_date=settings.screen_date,
+                games_count=len(games),
+                prop_line_count=len(prop_lines),
+                qualified_count=len(screening_result.candidates),
+                displayed_count=len(displayed_candidates),
+                line_source=settings.line_source,
+                bookmaker=settings.playerprops_book if settings.line_source == "playerprops" else settings.line_source.upper(),
+                min_score=settings.discord_min_score,
+                limit=settings.discord_limit,
+            )
+            discord_result = send_discord_embeds(settings.discord_webhook_url, embeds)
+            if discord_result.ok:
+                print("- Discord notification: sent")
+            else:
+                print(f"- Discord notification: failed ({discord_result.error or discord_result.status_code})")
+
         backtest_export_path = export_run_history(
             "screen_run",
             {
