@@ -120,6 +120,40 @@ Task Scheduler setup:
 - Start in: `C:\Users\muski\wnba_props`
 - Schedule: daily, pregame window such as 5:30 PM local time
 
+PowerShell setup from the terminal:
+
+```powershell
+$Action = New-ScheduledTaskAction `
+  -Execute "$env:ComSpec" `
+  -Argument '/c "C:\Users\muski\wnba_props\scripts\run_wnba_props_task.cmd"' `
+  -WorkingDirectory "C:\Users\muski\wnba_props"
+
+$Trigger = New-ScheduledTaskTrigger -Daily -At 5:30PM
+
+$Settings = New-ScheduledTaskSettingsSet `
+  -StartWhenAvailable `
+  -AllowStartIfOnBatteries `
+  -DontStopIfGoingOnBatteries
+
+Register-ScheduledTask `
+  -TaskName "WNBA Props Daily" `
+  -Action $Action `
+  -Trigger $Trigger `
+  -Settings $Settings `
+  -Description "Runs the WNBA props screener daily and logs history snapshots." `
+  -Force
+```
+
+Smoke test the scheduled task:
+
+```powershell
+Start-ScheduledTask -TaskName "WNBA Props Daily"
+Start-Sleep -Seconds 10
+Get-ScheduledTaskInfo -TaskName "WNBA Props Daily"
+Get-Content C:\Users\muski\wnba_props\outputs\logs\wnba_props_cmd_bootstrap.log -Tail 80
+Get-Content C:\Users\muski\wnba_props\outputs\logs\wnba_props_task.log -Tail 80
+```
+
 If the repo is not at `C:\Users\muski\wnba_props`, edit `PROJECT_DIR` in `scripts\run_wnba_props_task.cmd` or pass the correct `-ProjectDir` when testing the PowerShell script.
 
 ### macOS launchd
