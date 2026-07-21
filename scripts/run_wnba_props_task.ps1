@@ -1,5 +1,5 @@
 param(
-    [string]$ProjectDir = "C:\Users\$env:USERNAME\wnba_props",
+    [string]$ProjectDir = "C:\Users\muski\wnba_props",
     [string]$PythonExe = "python",
     [string]$PlayerPropsBook = "FANDUEL",
     [string]$RunNote = "scheduled WNBA props run"

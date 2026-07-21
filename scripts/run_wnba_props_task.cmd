@@ -1,7 +1,7 @@
 @echo off
 setlocal
 
-set "PROJECT_DIR=C:\Users\%USERNAME%\wnba_props"
+set "PROJECT_DIR=C:\Users\muski\wnba_props"
 set "PYTHON_EXE=python"
 set "POWERSHELL_EXE=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
 set "LOG_DIR=%PROJECT_DIR%\outputs\logs"

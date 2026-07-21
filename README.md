@@ -98,8 +98,8 @@ The project is ready for daily collection once the normal run completes and writ
 After cloning the repo on Windows, test the exact scheduled command manually from PowerShell:
 
 ```powershell
-cd C:\Users\<your-user>\wnba_props
-.\scripts\run_wnba_props_task.ps1 -ProjectDir "C:\Users\<your-user>\wnba_props" -PythonExe "python"
+cd C:\Users\muski\wnba_props
+.\scripts\run_wnba_props_task.ps1 -ProjectDir "C:\Users\muski\wnba_props" -PythonExe "python"
 ```
 
 That appends terminal output to:
@@ -116,11 +116,11 @@ outputs\history\
 
 Task Scheduler setup:
 
-- Program/script: `C:\Users\<your-user>\wnba_props\scripts\run_wnba_props_task.cmd`
-- Start in: `C:\Users\<your-user>\wnba_props`
+- Program/script: `C:\Users\muski\wnba_props\scripts\run_wnba_props_task.cmd`
+- Start in: `C:\Users\muski\wnba_props`
 - Schedule: daily, pregame window such as 5:30 PM local time
 
-If the repo is not at `C:\Users\<your-user>\wnba_props`, edit `PROJECT_DIR` in `scripts\run_wnba_props_task.cmd` or pass the correct `-ProjectDir` when testing the PowerShell script.
+If the repo is not at `C:\Users\muski\wnba_props`, edit `PROJECT_DIR` in `scripts\run_wnba_props_task.cmd` or pass the correct `-ProjectDir` when testing the PowerShell script.
 
 ### macOS launchd
 
