@@ -33,22 +33,38 @@ function Invoke-LoggedCommand {
         [string]$FilePath,
         [string[]]$Arguments = @()
     )
-    $SafeName = [System.IO.Path]::GetFileNameWithoutExtension($FilePath) -replace "[^A-Za-z0-9_-]", "_"
-    $TempOutput = Join-Path ([System.IO.Path]::GetTempPath()) ("wnba_props_{0}_{1}.log" -f $SafeName, [guid]::NewGuid().ToString("N"))
-    try {
-        Write-TaskLog "Running command: $FilePath $($Arguments -join ' ')"
-        & $FilePath @Arguments > $TempOutput 2>&1
-        $CommandExitCode = $LASTEXITCODE
-        if (Test-Path $TempOutput) {
-            Get-Content -Path $TempOutput | ForEach-Object {
+    Write-TaskLog "Running command: $FilePath $($Arguments -join ' ')"
+
+    $Process = New-Object System.Diagnostics.Process
+    $Process.StartInfo.FileName = $FilePath
+    foreach ($Argument in $Arguments) {
+        [void]$Process.StartInfo.ArgumentList.Add($Argument)
+    }
+    $Process.StartInfo.WorkingDirectory = $ProjectDir
+    $Process.StartInfo.UseShellExecute = $false
+    $Process.StartInfo.RedirectStandardOutput = $true
+    $Process.StartInfo.RedirectStandardError = $true
+
+    [void]$Process.Start()
+    $StdOut = $Process.StandardOutput.ReadToEnd()
+    $StdErr = $Process.StandardError.ReadToEnd()
+    $Process.WaitForExit()
+
+    if (-not [string]::IsNullOrWhiteSpace($StdOut)) {
+        $StdOut -split "`r?`n" | ForEach-Object {
+            if (-not [string]::IsNullOrWhiteSpace($_)) {
                 Write-TaskLog $_
             }
         }
-        return $CommandExitCode
     }
-    finally {
-        Remove-Item -Path $TempOutput -Force -ErrorAction SilentlyContinue
+    if (-not [string]::IsNullOrWhiteSpace($StdErr)) {
+        $StdErr -split "`r?`n" | ForEach-Object {
+            if (-not [string]::IsNullOrWhiteSpace($_)) {
+                Write-TaskLog $_
+            }
+        }
     }
+    return $Process.ExitCode
 }
 
 function Write-FailureDetails {
