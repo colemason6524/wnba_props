@@ -35,36 +35,37 @@ function Invoke-LoggedCommand {
     )
     Write-TaskLog "Running command: $FilePath $($Arguments -join ' ')"
 
-    $Process = New-Object System.Diagnostics.Process
-    $Process.StartInfo.FileName = $FilePath
-    foreach ($Argument in $Arguments) {
-        [void]$Process.StartInfo.ArgumentList.Add($Argument)
-    }
-    $Process.StartInfo.WorkingDirectory = $ProjectDir
-    $Process.StartInfo.UseShellExecute = $false
-    $Process.StartInfo.RedirectStandardOutput = $true
-    $Process.StartInfo.RedirectStandardError = $true
+    $SafeName = [System.IO.Path]::GetFileNameWithoutExtension($FilePath) -replace "[^A-Za-z0-9_-]", "_"
+    $TempBase = Join-Path ([System.IO.Path]::GetTempPath()) ("wnba_props_{0}_{1}" -f $SafeName, [guid]::NewGuid().ToString("N"))
+    $TempOut = "$TempBase.out.log"
+    $TempErr = "$TempBase.err.log"
 
-    [void]$Process.Start()
-    $StdOut = $Process.StandardOutput.ReadToEnd()
-    $StdErr = $Process.StandardError.ReadToEnd()
-    $Process.WaitForExit()
+    try {
+        $Process = Start-Process `
+            -FilePath $FilePath `
+            -ArgumentList $Arguments `
+            -WorkingDirectory $ProjectDir `
+            -Wait `
+            -PassThru `
+            -RedirectStandardOutput $TempOut `
+            -RedirectStandardError $TempErr
 
-    if (-not [string]::IsNullOrWhiteSpace($StdOut)) {
-        $StdOut -split "`r?`n" | ForEach-Object {
-            if (-not [string]::IsNullOrWhiteSpace($_)) {
-                Write-TaskLog $_
+        foreach ($Path in @($TempOut, $TempErr)) {
+            if (Test-Path $Path) {
+                Get-Content -Path $Path | ForEach-Object {
+                    if (-not [string]::IsNullOrWhiteSpace($_)) {
+                        Write-TaskLog $_
+                    }
+                }
             }
         }
+
+        return $Process.ExitCode
     }
-    if (-not [string]::IsNullOrWhiteSpace($StdErr)) {
-        $StdErr -split "`r?`n" | ForEach-Object {
-            if (-not [string]::IsNullOrWhiteSpace($_)) {
-                Write-TaskLog $_
-            }
-        }
+    finally {
+        Remove-Item -Path $TempOut -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path $TempErr -Force -ErrorAction SilentlyContinue
     }
-    return $Process.ExitCode
 }
 
 function Write-FailureDetails {
