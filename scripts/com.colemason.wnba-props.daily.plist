@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.colemason.wnba-props.daily</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>/Users/colemason/Documents/wnba_props/scripts/run_daily.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/colemason/Documents/wnba_props</string>
+
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>17</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/colemason/Documents/wnba_props/outputs/logs/launchd.out.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/colemason/Documents/wnba_props/outputs/logs/launchd.err.log</string>
+
+  <key>RunAtLoad</key>
+  <false/>
+</dict>
+</plist>
