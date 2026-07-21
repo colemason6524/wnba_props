@@ -93,7 +93,7 @@ python3 run_nightly.py --cache-clean
 Send the daily picks digest to Discord:
 
 ```bash
-SEND_DISCORD=true DISCORD_WEBHOOK_URL=your_discord_webhook_url python3 run_nightly.py
+SEND_DISCORD=true WNBA_PROPS_DISCORD_WEBHOOK_URL=your_discord_webhook_url python3 run_nightly.py
 ```
 
 Discord defaults to `DISCORD_MIN_SCORE=8` and `DISCORD_LIMIT=8` per side, while the terminal board still uses `MIN_DISPLAY_SCORE=7` unless changed.
@@ -126,10 +126,10 @@ outputs\history\
 Store the Discord webhook once for the Windows user that runs the scheduled task:
 
 ```powershell
-setx DISCORD_WEBHOOK_URL "your_discord_webhook_url"
+setx WNBA_PROPS_DISCORD_WEBHOOK_URL "your_discord_webhook_url"
 ```
 
-Open a new PowerShell window after `setx` before testing. The scheduled wrapper opts into Discord with `SEND_DISCORD=true`; if the webhook is missing, the run still completes and logs a notification failure.
+Open a new PowerShell window after `setx` before testing. The scheduled wrapper opts into Discord with `SEND_DISCORD=true`; if the webhook is missing, the run still completes and logs a notification failure. `DISCORD_WEBHOOK_URL` is still supported as a fallback for manual runs, but the WNBA-specific variable avoids interfering with MLB tasks that may use the generic name.
 
 Task Scheduler setup:
 
@@ -235,7 +235,7 @@ export STICKY_DAILY_LOG_CACHE=true
 export EXPORT_HISTORY=false
 export MIN_DISPLAY_SCORE=7
 export SEND_DISCORD=false
-export DISCORD_WEBHOOK_URL=your_discord_webhook_url
+export WNBA_PROPS_DISCORD_WEBHOOK_URL=your_discord_webhook_url
 export DISCORD_MIN_SCORE=8
 export DISCORD_LIMIT=8
 export LINE_SOURCE=playerprops

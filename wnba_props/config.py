@@ -159,7 +159,10 @@ def load_settings() -> Settings:
         export_history=os.environ.get("EXPORT_HISTORY", "false").strip().lower() in {"1", "true", "yes"},
         min_display_score=int(os.environ.get("MIN_DISPLAY_SCORE", "7")),
         send_discord=os.environ.get("SEND_DISCORD", "false").strip().lower() in {"1", "true", "yes"},
-        discord_webhook_url=os.environ.get("DISCORD_WEBHOOK_URL", "").strip(),
+        discord_webhook_url=(
+            os.environ.get("WNBA_PROPS_DISCORD_WEBHOOK_URL", "").strip()
+            or os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
+        ),
         discord_min_score=int(os.environ.get("DISCORD_MIN_SCORE", "8")),
         discord_limit=int(os.environ.get("DISCORD_LIMIT", "8")),
     )
