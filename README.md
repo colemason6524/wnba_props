@@ -241,6 +241,8 @@ export DISCORD_LIMIT=8
 export LINE_SOURCE=playerprops
 export PLAYERPROPS_BOOK=FANDUEL
 export BREF_REQUEST_INTERVAL_SECONDS=6.0
+export REGULAR_SEASON_LOG_STALE_DAYS=14
+export PLAYOFF_LOG_STALE_DAYS=2
 export FANDUEL_EVENT_URLS="https://sportsbook.fanduel.com/basketball/wnba/golden-state-valkyries-@-indiana-fever-35819846?tab=player-points"
 ```
 
@@ -261,6 +263,7 @@ Use `LINES_CACHE_TTL_MINUTES=0` if you want a full live line refresh every run.
 - repeated runs within the short line-cache window reuse scraped player prop pages
 - slate and game-log data can stay cached longer because they change much less often
 - Basketball-Reference requests are rate-limited by `BREF_REQUEST_INTERVAL_SECONDS` to reduce 429s while building first-time caches
+- regular-season logs can be up to `REGULAR_SEASON_LOG_STALE_DAYS` old by default so league breaks do not wipe the board
 - first FanDuel runs may be slower because the scraper visits active team roster pages and player prop pages
 - Basketball-Reference matching may need manual aliases for certain player names. Add them to `config/player_aliases.json`.
 - the board hides qualified props below `MIN_DISPLAY_SCORE` by default, but still evaluates them internally

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from dataclasses import asdict
 from datetime import date, datetime, timedelta, timezone
@@ -54,9 +55,13 @@ def _logs_are_stale_for_screen(screen_date: date, logs: list) -> bool:
     latest_date = _latest_log_date(logs)
     if latest_date is None:
         return True
-    if not _is_playoff_window(screen_date):
-        return latest_date < screen_date - timedelta(days=5)
-    return latest_date < screen_date - timedelta(days=2)
+    return latest_date < screen_date - timedelta(days=_max_log_age_days(screen_date))
+
+
+def _max_log_age_days(screen_date: date) -> int:
+    if _is_playoff_window(screen_date):
+        return int(os.environ.get("PLAYOFF_LOG_STALE_DAYS", "2"))
+    return int(os.environ.get("REGULAR_SEASON_LOG_STALE_DAYS", "14"))
 
 
 def _load_logs_with_playoff_refresh(
