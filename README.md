@@ -1,12 +1,22 @@
-# WNBA Nightly Props Screener
+# WNBA Daily Props Screener
 
-Numbers-first nightly WNBA prop screener for common over markets.
+Numbers-first daily WNBA prop screener for common player prop markets. The goal is to mirror the NBA/MLB props workflow in a separate WNBA repo: collect the slate, load no-key line values, evaluate the current model for overs and unders, save history for backtesting, and optionally send only stronger plays to Discord.
+
+## Current project state
+
+- Independent repo intended to live at `C:\Users\muski\wnba_props` on the Windows automation box and `/Users/colemason/Documents/wnba_props` on macOS.
+- Default daily flow is operational: ESPN slate, PlayerProps.ai line values, Basketball-Reference/ESPN logs, ESPN injuries and odds context, terminal board, JSON history export, and optional Discord notification.
+- Windows Task Scheduler is the primary deployment target. The checked-in Windows wrapper assumes `C:\Users\muski\wnba_props`, `python`, and Windows PowerShell 5.1.
+- The model is intentionally still close to the NBA-style heuristic model. Feature engineering and WNBA-specific model tuning are future work, not current behavior.
+- Saved caches, logs, history exports, and backtest reports are local runtime artifacts under `.cache/` and `outputs/`; they are intentionally ignored by git.
 
 ## Current stack
 
 - Slate: ESPN scoreboard
 - Lines: PlayerProps.ai no-key feed with FanDuel/DraftKings book lines; manual ingest fallback; direct sportsbook scrapers remain diagnostic
 - Logs: Basketball-Reference, with ESPN boxscore fallback
+- Context: ESPN injuries plus ESPN odds when available
+- Notifications: Discord webhook embeds, gated separately from the terminal board
 
 ## What it does
 
@@ -15,11 +25,13 @@ Numbers-first nightly WNBA prop screener for common over markets.
 - fetches recent player game logs from Basketball-Reference
 - applies the screening model and context flags
 - prints a ranked terminal table
+- writes a backtest-ready `screen_run_*.json` history snapshot
 - optionally sends a Discord digest for picks above a stricter notification cutoff
 
 ## Requirements
 
 - Python 3.9+
+
 ## Quick start
 
 ```bash
@@ -70,10 +82,16 @@ Warm cache without screening:
 python3 run_nightly.py --warm-cache
 ```
 
-Backtest historical screen runs:
+Backtest the latest completed historical screen run:
 
 ```bash
 python3 backtest.py
+```
+
+Backtest the latest saved screen for every historical slate date:
+
+```bash
+python3 backtest.py --all-history
 ```
 
 Backtest reports are also exported automatically to `outputs/backtests/` with one file per slate date.
@@ -97,6 +115,26 @@ SEND_DISCORD=true WNBA_PROPS_DISCORD_WEBHOOK_URL=your_discord_webhook_url python
 ```
 
 Discord defaults to `DISCORD_MIN_SCORE=8` and `DISCORD_LIMIT=8` per side, while the terminal board still uses `MIN_DISPLAY_SCORE=7` unless changed.
+
+Inspect the full board without sending Discord:
+
+```bash
+SEND_DISCORD=false MIN_DISPLAY_SCORE=0 python3 run_nightly.py
+```
+
+If Discord says there are no plays, use the full-board command to distinguish between "no model-qualified props" and "qualified props exist but none cleared the Discord cutoff."
+
+## Architecture decisions
+
+- **Separate WNBA repo:** this project copies lessons from NBA/MLB projects but stays independent so WNBA-specific data quirks, aliases, thresholds, and model tuning can evolve without disturbing the NBA project.
+- **No paid odds API dependency:** the default line source is the no-key PlayerProps.ai feed. The screener needs line values more than price/odds, so the model ignores sportsbook odds unless later work explicitly adds price-aware scoring.
+- **PlayerProps.ai is default; FanDuel/DraftKings direct sources are diagnostic:** FanDuel WNBA pages can return bot/captcha/CORS-challenged content, and DraftKings direct/headless paths have been unreliable. PlayerProps.ai book-labeled lines have been the most practical no-key source so far, but still need continued validation against sportsbook screens.
+- **Manual line fallback stays simple:** `LINE_SOURCE=manual` reads `config/manual_lines.csv` when the automated line feed is wrong, unavailable, or needs spot validation.
+- **Terminal board and Discord cutoff are intentionally different:** `MIN_DISPLAY_SCORE` controls what a user can inspect locally; `DISCORD_MIN_SCORE` controls what gets pushed as a notification. Discord defaults stricter to reduce noise.
+- **WNBA-specific Discord webhook variable:** use `WNBA_PROPS_DISCORD_WEBHOOK_URL` so this project does not hijack MLB tasks that may already use `DISCORD_WEBHOOK_URL`.
+- **Pregame-only by default:** `PREGAME_ONLY=true` drops games that have already started. Late-day manual runs may show a smaller slate or no eligible games.
+- **Regular-season log freshness allows league breaks:** `REGULAR_SEASON_LOG_STALE_DAYS=14` prevents the board from zeroing out after WNBA breaks. Playoff freshness remains tighter by default with `PLAYOFF_LOG_STALE_DAYS=2`.
+- **PowerShell wrapper avoids native stderr failure:** Python progress messages are written to stderr. The Windows task wrapper captures stdout/stderr through `Start-Process` temp files so normal progress output does not become a PowerShell `NativeCommandError`.
 
 ## Daily Automation
 
@@ -165,11 +203,19 @@ Smoke test the scheduled task:
 
 ```powershell
 Start-ScheduledTask -TaskName "WNBA Props Daily"
-Start-Sleep -Seconds 10
+Start-Sleep -Seconds 60
 Get-ScheduledTaskInfo -TaskName "WNBA Props Daily"
 Get-Content C:\Users\muski\wnba_props\outputs\logs\wnba_props_cmd_bootstrap.log -Tail 80
 Get-Content C:\Users\muski\wnba_props\outputs\logs\wnba_props_task.log -Tail 80
 ```
+
+Expected success signal:
+
+```powershell
+LastTaskResult : 0
+```
+
+and the task log should end with either `Finished WNBA props with exit code 0` or a clear runner-level failure. Old failure entries may remain in the log; evaluate the newest timestamped run.
 
 If the repo is not at `C:\Users\muski\wnba_props`, edit `PROJECT_DIR` in `scripts\run_wnba_props_task.cmd` or pass the correct `-ProjectDir` when testing the PowerShell script.
 
@@ -193,7 +239,7 @@ Every successful nightly screen still writes the backtest-ready JSON snapshot to
 outputs/history/
 ```
 
-Install the macOS daily task, scheduled for 5:30 PM local time:
+Install the macOS daily task. The checked-in plist is currently scheduled for 5:30 PM local time; WNBA slates can start earlier, so Windows production automation currently uses an 11:00 AM pregame run.
 
 ```bash
 mkdir -p ~/Library/LaunchAgents
@@ -248,6 +294,39 @@ export FANDUEL_EVENT_URLS="https://sportsbook.fanduel.com/basketball/wnba/golden
 
 Use `LINES_CACHE_TTL_MINUTES=0` if you want a full live line refresh every run.
 
+## Testing and validation
+
+Before pushing code changes, run at least:
+
+```bash
+PYTHONPYCACHEPREFIX=.pycache python3 -m py_compile run_nightly.py backtest.py wnba_props/config.py wnba_props/output.py
+PYTHONPYCACHEPREFIX=.pycache python3 run_nightly.py --cache-report
+python3 preview_lines.py
+```
+
+For a slate sanity check:
+
+```bash
+SEND_DISCORD=false MIN_DISPLAY_SCORE=0 python3 run_nightly.py
+```
+
+For Windows task validation:
+
+```powershell
+Start-ScheduledTask -TaskName "WNBA Props Daily"
+Start-Sleep -Seconds 60
+Get-ScheduledTaskInfo -TaskName "WNBA Props Daily"
+Get-Content C:\Users\muski\wnba_props\outputs\logs\wnba_props_task.log -Tail 120
+```
+
+Important summary fields:
+
+- `Players loaded successfully` should be near `Unique players with lines`; if it is zero, inspect skipped player reasons before interpreting the board.
+- `Prop lines evaluated` should be greater than zero on a real slate with available lines.
+- `Prop lines that qualified` is the full model-qualified set.
+- `Prop lines displayed` depends on `MIN_DISPLAY_SCORE`.
+- Discord only sends candidates at or above `DISCORD_MIN_SCORE`.
+
 ## Notes
 
 - The first run may be slower because it builds local caches and Basketball-Reference player lookup entries.
@@ -271,8 +350,24 @@ Use `LINES_CACHE_TTL_MINUTES=0` if you want a full live line refresh every run.
 - screen runs now write backtest-ready snapshots to `outputs/history/`
 - `python3 backtest.py` resolves finished props from stored runs and reports score-band, prop-type, and flag performance
 
-## Current gaps before first live stats run
+## Debugging lessons learned
+
+- If Discord reports no plays, first check whether the run evaluated any props. After the WNBA break, the board initially showed no Discord plays because every player was skipped as `stale recent logs`; increasing regular-season log freshness fixed the actual issue.
+- `preview_lines.py` only proves line coverage. It does not load stats or prove the model evaluated candidates.
+- `MIN_DISPLAY_SCORE=0` is the safest manual inspection mode because it shows every model-qualified candidate without changing scoring.
+- `SEND_DISCORD=false` should be set for manual investigations to avoid duplicate notifications.
+- `setx` writes future Windows environment variables but does not update the current PowerShell session. Open a new PowerShell window after setting webhook variables.
+- A clean scheduled task can still produce `No eligible WNBA games found` if the run happens after games have started or there is no remaining pregame slate.
+- A first run after a break or cache miss can be slow because Basketball-Reference fetches are rate-limited intentionally.
+
+## Known limitations and future work
 
 - broader validation of PlayerProps.ai book-labeled lines against FanDuel/DraftKings screens across several slates
 - possible player alias cleanup after the first live line run
 - possible source-shape adjustments if FanDuel returns unexpected formats
+- WNBA-specific model tuning is still unresolved; current scoring is intentionally conservative and inherited from prior props workflows
+- combined props such as PRA, P+A, P+R, and R+A are supported in code but depend on line-source coverage and have not been validated as deeply as PTS, REB, AST, and 3PM
+- direct FanDuel/DraftKings scraping remains unreliable enough that it should not be considered the production line path
+- backtesting depends on saved `outputs/history/screen_run_*.json` files from the runtime machine; those files are not committed
+- injury and availability flags are context signals, not automatic hard excludes
+- no pricing or odds-value model is currently implemented
