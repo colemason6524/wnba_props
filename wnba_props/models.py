@@ -28,6 +28,10 @@ class PropLine:
     bookmaker: str
     source: str
     collected_at: datetime
+    over_odds: Optional[int] = None
+    under_odds: Optional[int] = None
+    over_decimal: Optional[float] = None
+    under_decimal: Optional[float] = None
 
 
 @dataclass
@@ -84,6 +88,8 @@ class Candidate:
     avg_minutes_last_10: float
     delta_avg_last_5: float
     score: int
+    american_odds: Optional[int] = None
+    decimal_odds: Optional[float] = None
     flags: List[str] = field(default_factory=list)
     spread: Optional[float] = None
     total: Optional[float] = None

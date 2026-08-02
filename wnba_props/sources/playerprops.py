@@ -24,7 +24,10 @@ STAT_TO_PROP_TYPE = {
 
 TEAM_ALIASES = {
     "LAS": "LA",
+    "LVA": "LV",
     "GSV": "GS",
+    "NYL": "NY",
+    "PDX": "POR",
     "PHO": "PHX",
     "WAS": "WSH",
 }
@@ -37,11 +40,23 @@ class PlayerPropsSource:
         self.settings = settings
         self.lines_cache = lines_cache
         self.failures: list[str] = []
+        self.diagnostics: dict[str, object] = {}
 
     def fetch_prop_lines(self, games: Iterable[Game]) -> list[PropLine]:
         games = list(games)
+        self.failures = []
+        self.diagnostics = {
+            "slate_games": len(games),
+            "payload_events": 0,
+            "matched_events": 0,
+            "unmatched_events": [],
+            "players_seen": 0,
+            "selected_book_plays": 0,
+            "lines_found": 0,
+        }
         payload = self._fetch_payload()
         events = payload.get("eventPredictions", []) if isinstance(payload, dict) else []
+        self.diagnostics["payload_events"] = len(events)
         if not events:
             self.failures.append("PlayerProps payload did not include eventPredictions.")
             return []
@@ -56,8 +71,21 @@ class PlayerPropsSource:
             else:
                 game = None
             if game is None:
+                raw_teams = [str(team).strip().upper() for team in event.get("teams", [])]
+                mismatch = {
+                    "raw_teams": raw_teams,
+                    "normalized_teams": event_teams,
+                }
+                self.diagnostics["unmatched_events"].append(mismatch)
+                self.failures.append(
+                    "PlayerProps event "
+                    f"{'/'.join(raw_teams) or '<missing teams>'} normalized to "
+                    f"{'/'.join(event_teams) or '<missing teams>'} but did not match the ESPN slate."
+                )
                 continue
+            self.diagnostics["matched_events"] += 1
             for player in event.get("players", []):
+                self.diagnostics["players_seen"] += 1
                 player_name = player.get("playerName", "")
                 team = self._normalize_team(player.get("team", ""))
                 if not player_name or not team:
@@ -75,6 +103,7 @@ class PlayerPropsSource:
                     play = self._book_play(stat_payload.get("plays", []))
                     if play is None:
                         continue
+                    self.diagnostics["selected_book_plays"] += 1
                     line_value = safe_float(play.get("line"), default=-1.0)
                     if line_value < 0:
                         continue
@@ -91,9 +120,20 @@ class PlayerPropsSource:
                             bookmaker=self.settings.playerprops_book.lower(),
                             source="playerprops_ai",
                             collected_at=collected_at,
+                            over_odds=self._optional_int(play.get("over")),
+                            under_odds=self._optional_int(play.get("under")),
+                            over_decimal=self._optional_float(play.get("overDecimal")),
+                            under_decimal=self._optional_float(play.get("underDecimal")),
                         )
                     )
-        return self._dedupe(lines)
+        deduped = self._dedupe(lines)
+        self.diagnostics["lines_found"] = len(deduped)
+        if not deduped and self.diagnostics["matched_events"]:
+            self.failures.append(
+                f"Matched {self.diagnostics['matched_events']} PlayerProps events, but found no supported "
+                f"{self.settings.playerprops_book} lines for {', '.join(self.settings.supported_prop_types)}."
+            )
+        return deduped
 
     def _fetch_payload(self) -> dict:
         cache_key = f"playerprops_wnba_{self.settings.screen_date.isoformat()}"
@@ -135,6 +175,18 @@ class PlayerPropsSource:
     def _normalize_team(self, value: str) -> str:
         cleaned = value.strip().upper()
         return TEAM_ALIASES.get(cleaned, cleaned)
+
+    def _optional_int(self, value: object) -> int | None:
+        try:
+            return int(float(value)) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def _optional_float(self, value: object) -> float | None:
+        try:
+            return float(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
 
     def _dedupe(self, lines: list[PropLine]) -> list[PropLine]:
         deduped: dict[tuple[str, str, str], PropLine] = {}

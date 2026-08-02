@@ -11,7 +11,7 @@ from statistics import mean
 
 from wnba_props.cache import JsonCache
 from wnba_props.config import CACHE_DIR, OUTPUTS_DIR, load_settings
-from wnba_props.notifiers.discord import send_discord_embeds
+from wnba_props.notifiers.discord import send_discord_embeds, send_discord_message
 from wnba_props.output import render_candidates, render_discord_embeds, render_line_board
 from wnba_props.screener import screen_candidates, summarize_return_context
 from wnba_props.sources.basketball_reference import BasketballReferenceSource
@@ -279,6 +279,31 @@ def export_run_history(filename_prefix: str, payload: dict) -> Path:
     return path
 
 
+def _line_source_failure_message(settings, games: list, line_source) -> str:
+    diagnostics = getattr(line_source, "diagnostics", {}) or {}
+    failures = list(getattr(line_source, "failures", []) or [])
+    details = [
+        "WNBA props data failure",
+        f"Date: {settings.screen_date.isoformat()}",
+        f"Source: {settings.line_source}",
+        f"Requested book: {settings.playerprops_book if settings.line_source == 'playerprops' else '-'}",
+        f"Eligible ESPN games: {len(games)}",
+    ]
+    if diagnostics:
+        details.extend(
+            [
+                f"PlayerProps events: {diagnostics.get('payload_events', '-')}",
+                f"Matched events: {diagnostics.get('matched_events', '-')}",
+                f"Selected-book plays inspected: {diagnostics.get('selected_book_plays', '-')}",
+            ]
+        )
+    if failures:
+        details.append("Issues:")
+        details.extend(f"- {failure}" for failure in failures[:5])
+    details.append("The run exited without producing a picks board. This is not a normal no-plays result.")
+    return "\n".join(details)
+
+
 def _classify_team_injury_impacts(team_injuries: dict[str, list], logs_by_player: dict[str, list]) -> None:
     for injuries in team_injuries.values():
         for injury in injuries:
@@ -373,6 +398,34 @@ def main() -> int:
                     print(f"- {failure}", file=sys.stderr)
                 if len(line_source.failures) > 20:
                     print(f"- ... and {len(line_source.failures) - 20} more", file=sys.stderr)
+            diagnostics = dict(getattr(line_source, "diagnostics", {}) or {})
+            failure_path = export_run_history(
+                "screen_failure",
+                {
+                    "mode": "screen_failure",
+                    "exported_at": datetime.now(timezone.utc).isoformat(),
+                    "screen_date": settings.screen_date.isoformat(),
+                    "games": [asdict(game) for game in games],
+                    "line_source": settings.line_source,
+                    "bookmaker": settings.playerprops_book if settings.line_source == "playerprops" else "",
+                    "diagnostics": diagnostics,
+                    "failures": list(getattr(line_source, "failures", []) or []),
+                },
+            )
+            print(f"- Failure snapshot exported to {failure_path}", file=sys.stderr)
+            if settings.send_discord:
+                discord_result = send_discord_message(
+                    settings.discord_webhook_url,
+                    _line_source_failure_message(settings, games, line_source),
+                )
+                if discord_result.ok:
+                    print("- Discord data-failure notification: sent", file=sys.stderr)
+                else:
+                    print(
+                        f"- Discord data-failure notification: failed "
+                        f"({discord_result.error or discord_result.status_code})",
+                        file=sys.stderr,
+                    )
             return 1
         try:
             game_contexts = odds_context_source.fetch_game_context(settings.screen_date)
