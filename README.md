@@ -114,7 +114,7 @@ Send the daily picks digest to Discord:
 SEND_DISCORD=true WNBA_PROPS_DISCORD_WEBHOOK_URL=your_discord_webhook_url python3 run_nightly.py
 ```
 
-Discord defaults to `DISCORD_MIN_SCORE=8` and `DISCORD_LIMIT=8` per side, while the terminal board still uses `MIN_DISPLAY_SCORE=7` unless changed. Candidates flagged `SEASON-` or `TEAM_OUT` remain on the research board and in history but are suppressed from Discord by default.
+Discord defaults to `DISCORD_MIN_SCORE=8` and `DISCORD_LIMIT=5` per side (10 plays maximum), while the terminal board still uses `MIN_DISPLAY_SCORE=7` unless changed. Candidates flagged `SEASON-` or `TEAM_OUT` remain on the research board and in history but are suppressed from Discord by default.
 
 Inspect the full board without sending Discord:
 
@@ -285,7 +285,7 @@ export MIN_DISPLAY_SCORE=7
 export SEND_DISCORD=false
 export WNBA_PROPS_DISCORD_WEBHOOK_URL=your_discord_webhook_url
 export DISCORD_MIN_SCORE=8
-export DISCORD_LIMIT=8
+export DISCORD_LIMIT=5
 export LINE_SOURCE=playerprops
 export PLAYERPROPS_BOOK=FANDUEL
 export BREF_REQUEST_INTERVAL_SECONDS=6.0

@@ -71,6 +71,24 @@ class PolicyTests(unittest.TestCase):
         self.assertNotIn("Season Risk", rendered)
         self.assertIn("1 risk-flagged plays suppressed", embeds[0]["description"])
 
+    def test_discord_defaults_to_five_plays_per_side(self) -> None:
+        candidates = [_candidate(f"Player {index}", []) for index in range(6)]
+
+        embeds = render_discord_embeds(
+            candidates,
+            screen_date=date(2026, 8, 2),
+            games_count=1,
+            prop_line_count=6,
+            qualified_count=6,
+            displayed_count=6,
+            line_source="playerprops",
+            bookmaker="FANDUEL",
+            min_score=8,
+        )
+
+        play_fields = [field for field in embeds[0]["fields"] if field["name"].startswith("Over |")]
+        self.assertEqual(5, len(play_fields))
+
     def test_line_source_failure_message_is_distinct_from_no_plays(self) -> None:
         settings = Settings(screen_date=date(2026, 8, 1), line_source="playerprops")
         source = type(

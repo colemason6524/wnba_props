@@ -2,6 +2,7 @@ param(
     [string]$ProjectDir = "C:\Users\muski\wnba_props",
     [string]$PythonExe = "python",
     [string]$PlayerPropsBook = "FANDUEL",
+    [int]$DiscordLimit = 5,
     [string]$RunNote = "scheduled WNBA props run"
 )
 
@@ -86,6 +87,7 @@ try {
     Write-TaskLog "ProjectDir: $ProjectDir"
     Write-TaskLog "PythonExe: $PythonExe"
     Write-TaskLog "PlayerPropsBook: $PlayerPropsBook"
+    Write-TaskLog "DiscordLimit: $DiscordLimit per side"
     Write-TaskLog "RunNote: $RunNote"
 
     if (-not (Test-Path $ProjectDir)) {
@@ -98,6 +100,7 @@ try {
     $env:LINE_SOURCE = "playerprops"
     $env:PLAYERPROPS_BOOK = $PlayerPropsBook
     $env:SEND_DISCORD = "true"
+    $env:DISCORD_LIMIT = $DiscordLimit.ToString()
     $env:RUN_NOTE = $RunNote
 
     Write-TaskLog "Python version:"

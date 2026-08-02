@@ -119,7 +119,7 @@ class Settings:
     send_discord: bool = False
     discord_webhook_url: str = ""
     discord_min_score: int = 8
-    discord_limit: int = 8
+    discord_limit: int = 5
 
 
 def load_settings() -> Settings:
@@ -166,5 +166,5 @@ def load_settings() -> Settings:
             or os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
         ),
         discord_min_score=int(os.environ.get("DISCORD_MIN_SCORE", "8")),
-        discord_limit=int(os.environ.get("DISCORD_LIMIT", "8")),
+        discord_limit=int(os.environ.get("DISCORD_LIMIT", "5")),
     )

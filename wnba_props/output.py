@@ -216,7 +216,7 @@ def render_discord_embeds(
     line_source: str,
     bookmaker: str,
     min_score: int = 8,
-    limit: int = 8,
+    limit: int = 5,
 ) -> list[dict]:
     score_items = sorted(
         [candidate for candidate in candidates if candidate.score >= min_score],

@@ -18,7 +18,7 @@ cd "$PROJECT_DIR" || exit 1
   WNBA_PROPS_DISCORD_WEBHOOK_URL="${WNBA_PROPS_DISCORD_WEBHOOK_URL:-}" \
   DISCORD_WEBHOOK_URL="${DISCORD_WEBHOOK_URL:-}" \
   DISCORD_MIN_SCORE="${DISCORD_MIN_SCORE:-8}" \
-  DISCORD_LIMIT="${DISCORD_LIMIT:-8}" \
+  DISCORD_LIMIT="${DISCORD_LIMIT:-5}" \
   /usr/bin/python3 run_nightly.py
   status=$?
   echo "===== Finished with status $status: $(date '+%Y-%m-%d %H:%M:%S %Z') ====="
