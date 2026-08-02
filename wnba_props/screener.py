@@ -279,6 +279,8 @@ def _build_candidates_for_line(
                 avg_minutes_last_10=avg_minutes_last_10,
                 delta_avg_last_5=delta_avg_last_5,
                 score=score,
+                american_odds=line.over_odds if side == "OVER" else line.under_odds,
+                decimal_odds=line.over_decimal if side == "OVER" else line.under_decimal,
                 flags=flags,
                 spread=_team_spread(line.team, game_context),
                 total=getattr(game_context, "total", None),
@@ -376,6 +378,7 @@ def _score_candidate(
     if delta_season >= 0:
         score += 1
     else:
+        score -= 2
         flags.append("SEASON-")
     if avg_minutes_last_5 >= settings.thresholds.strong_minutes_threshold:
         score += 1
@@ -694,9 +697,10 @@ def _injury_score_adjustment(side: str, flags: list[str]) -> int:
     if "SELF_Q" in flags:
         adjustment -= 1 if side == "OVER" else 0
 
+    if "TEAM_OUT" in flags:
+        adjustment -= 1
+
     if side == "OVER":
-        if "TEAM_OUT" in flags:
-            adjustment += 1
         if "KEY_BACK" in flags:
             adjustment -= 2
         if "KEY_Q" in flags:

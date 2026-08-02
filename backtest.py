@@ -11,7 +11,7 @@ from shutil import rmtree
 from statistics import mean
 
 from wnba_props.cache import JsonCache
-from wnba_props.config import CACHE_DIR, OUTPUTS_DIR, load_settings
+from wnba_props.config import CACHE_DIR, DISCORD_SUPPRESS_FLAGS, OUTPUTS_DIR, load_settings
 from wnba_props.models import PlayerGameLog
 from wnba_props.sources.espn import EspnSlateSource
 from wnba_props.sources.espn_boxscore import EspnBoxscoreSource
@@ -35,6 +35,8 @@ class ResolvedPrediction:
     outcome: str
     edge: float
     resolution_method: str
+    american_odds: int | None = None
+    decimal_odds: float | None = None
 
 
 @dataclass
@@ -329,6 +331,8 @@ def _resolve_via_boxscore(
         outcome=outcome,
         edge=edge,
         resolution_method="boxscore",
+        american_odds=prediction.get("american_odds"),
+        decimal_odds=prediction.get("decimal_odds"),
     )
 
 
@@ -489,6 +493,8 @@ def _resolve_predictions(predictions: list[dict]) -> ResolutionReport:
                 outcome=outcome,
                 edge=edge,
                 resolution_method=resolution_method or "exact",
+                american_odds=prediction.get("american_odds"),
+                decimal_odds=prediction.get("decimal_odds"),
             )
         )
         resolved_game_keys.add(_game_key(screen_date, prediction["team"], prediction["opponent"]))
@@ -539,6 +545,39 @@ def _average_edge(rows: list[ResolvedPrediction]) -> float:
     return mean(row.edge for row in rows)
 
 
+def _profit_units(row: ResolvedPrediction) -> float | None:
+    has_decimal_price = row.decimal_odds is not None and row.decimal_odds > 1.0
+    has_american_price = row.american_odds is not None and row.american_odds != 0
+    if not has_decimal_price and not has_american_price:
+        return None
+    if row.outcome == "push":
+        return 0.0
+    if row.outcome == "loss":
+        return -1.0
+    if has_decimal_price:
+        assert row.decimal_odds is not None
+        return row.decimal_odds - 1.0
+    assert row.american_odds is not None
+    if row.american_odds > 0:
+        return row.american_odds / 100.0
+    return 100.0 / abs(row.american_odds)
+
+
+def _render_priced_performance(rows: list[ResolvedPrediction]) -> list[str]:
+    priced = [(row, _profit_units(row)) for row in rows]
+    priced = [(row, units) for row, units in priced if units is not None]
+    lines = ["Price-aware performance:"]
+    if not priced:
+        lines.append("- No stored player-prop prices were available for these historical runs.")
+        return lines
+    total_units = sum(units for _, units in priced)
+    roi = total_units / len(priced)
+    lines.append(f"- Priced plays: {len(priced)}")
+    lines.append(f"- Flat-stake units: {total_units:+.2f}")
+    lines.append(f"- Flat-stake ROI: {roi * 100:+.1f}%")
+    return lines
+
+
 def _render_score_bands(rows: list[ResolvedPrediction]) -> list[str]:
     bands: dict[str, list[ResolvedPrediction]] = defaultdict(list)
     for row in rows:
@@ -557,7 +596,11 @@ def _render_score_bands(rows: list[ResolvedPrediction]) -> list[str]:
     return lines
 
 
-def _render_flag_performance(rows: list[ResolvedPrediction], min_samples: int = 15) -> list[str]:
+def _render_flag_performance(
+    rows: list[ResolvedPrediction],
+    min_samples: int = 15,
+    title: str = "Flag performance",
+) -> list[str]:
     flags_to_rows: dict[str, list[ResolvedPrediction]] = defaultdict(list)
     for row in rows:
         for flag in row.flags:
@@ -571,7 +614,7 @@ def _render_flag_performance(rows: list[ResolvedPrediction], min_samples: int = 
         ),
         key=lambda item: (-_hit_rate(item[1]), -len(item[1]), item[0]),
     )
-    lines = [f"Flag performance (min {min_samples} samples):"]
+    lines = [f"{title} (min {min_samples} samples):"]
     if not ranked:
         lines.append("- No flags met the sample threshold yet.")
         return lines
@@ -582,6 +625,87 @@ def _render_flag_performance(rows: list[ResolvedPrediction], min_samples: int = 
         lines.append(
             f"- {flag}: {len(flag_rows)} plays, {(_hit_rate(flag_rows) * 100):.1f}% hit, {pushes} pushes, avg edge {avg_edge:+.2f}"
         )
+    return lines
+
+
+def _render_slate_performance(rows: list[ResolvedPrediction], min_score: int) -> list[str]:
+    by_date: dict[date, list[ResolvedPrediction]] = defaultdict(list)
+    for row in rows:
+        if row.score >= min_score:
+            by_date[row.screen_date].append(row)
+    lines = [f"Slate performance (score >= {min_score}):"]
+    if not by_date:
+        lines.append("- No resolved plays met the threshold.")
+        return lines
+    for screen_date in sorted(by_date):
+        slate_rows = by_date[screen_date]
+        lines.append(
+            f"- {screen_date}: {len(slate_rows)} plays, {(_hit_rate(slate_rows) * 100):.1f}% hit, "
+            f"avg edge {_average_edge(slate_rows):+.2f}"
+        )
+    return lines
+
+
+def _render_policy_performance(
+    rows: list[ResolvedPrediction],
+    display_score: int,
+    discord_score: int,
+) -> list[str]:
+    displayed = [row for row in rows if row.score >= display_score]
+    score_eligible = [row for row in rows if row.score >= discord_score]
+    suppressed = [
+        row
+        for row in score_eligible
+        if any(flag in DISCORD_SUPPRESS_FLAGS for flag in row.flags)
+    ]
+    discord_eligible = [row for row in score_eligible if row not in suppressed]
+    clean_core = [
+        row
+        for row in displayed
+        if not any(flag in DISCORD_SUPPRESS_FLAGS for flag in row.flags)
+    ]
+    shadow = [row for row in displayed if row not in clean_core]
+    lines = ["Current notification policy:"]
+    lines.append(
+        f"- Discord score-eligible (score >= {discord_score}): {len(score_eligible)}, "
+        f"{(_hit_rate(score_eligible) * 100):.1f}% hit, avg edge {_average_edge(score_eligible):+.2f}"
+    )
+    lines.append(
+        f"- Discord policy-eligible after suppressing {', '.join(sorted(DISCORD_SUPPRESS_FLAGS))}: "
+        f"{len(discord_eligible)}, {(_hit_rate(discord_eligible) * 100):.1f}% hit, "
+        f"avg edge {_average_edge(discord_eligible):+.2f}"
+    )
+    lines.append(
+        f"- Suppressed score-eligible shadow group: {len(suppressed)}, "
+        f"{(_hit_rate(suppressed) * 100):.1f}% hit, avg edge {_average_edge(suppressed):+.2f}"
+    )
+    lines.append(
+        f"- Displayed clean core: {len(clean_core)}, {(_hit_rate(clean_core) * 100):.1f}% hit, "
+        f"avg edge {_average_edge(clean_core):+.2f}"
+    )
+    lines.append(
+        f"- Displayed suppressed shadow group: {len(shadow)}, {(_hit_rate(shadow) * 100):.1f}% hit, "
+        f"avg edge {_average_edge(shadow):+.2f}"
+    )
+    return lines
+
+
+def _render_rolling_performance(rows: list[ResolvedPrediction], min_score: int) -> list[str]:
+    eligible = sorted(
+        [row for row in rows if row.score >= min_score],
+        key=lambda row: (row.screen_date, row.player_name, row.prop_type, row.side, row.line),
+    )
+    lines = [f"Rolling performance (score >= {min_score}):"]
+    for window in (25, 50, 100):
+        if len(eligible) < window:
+            continue
+        window_rows = eligible[-window:]
+        lines.append(
+            f"- Last {window}: {(_hit_rate(window_rows) * 100):.1f}% hit, "
+            f"avg edge {_average_edge(window_rows):+.2f}"
+        )
+    if len(lines) == 1:
+        lines.append("- Not enough resolved plays for a 25-play window yet.")
     return lines
 
 
@@ -673,6 +797,12 @@ def main() -> int:
     displayed_resolved = [row for row in resolved if row.score >= settings.min_display_score]
     displayed_pushes = sum(1 for row in displayed_resolved if row.outcome == "push")
     displayed_by_side = Counter(row.side for row in displayed_resolved)
+    discord_score_resolved = [row for row in resolved if row.score >= settings.discord_min_score]
+    discord_policy_resolved = [
+        row
+        for row in discord_score_resolved
+        if not any(flag in DISCORD_SUPPRESS_FLAGS for flag in row.flags)
+    ]
 
     lines: list[str] = []
     lines.append("Backtest summary:")
@@ -699,6 +829,13 @@ def main() -> int:
         lines.append(f"- Displayed average edge vs line: {_average_edge(displayed_resolved):+.2f}")
         lines.append(f"- Displayed overs resolved: {displayed_by_side.get('OVER', 0)}")
         lines.append(f"- Displayed unders resolved: {displayed_by_side.get('UNDER', 0)}")
+        lines.append(
+            f"- Discord policy plays graded: {len(discord_policy_resolved)} "
+            f"(score >= {settings.discord_min_score}, excluding "
+            f"{', '.join(sorted(DISCORD_SUPPRESS_FLAGS))})"
+        )
+        lines.append(f"- Discord policy hit rate: {(_hit_rate(discord_policy_resolved) * 100):.1f}%")
+        lines.append(f"- Discord policy average edge: {_average_edge(discord_policy_resolved):+.2f}")
     lines.append("")
     if resolved:
         lines.extend(_render_score_bands(resolved))
@@ -706,6 +843,28 @@ def main() -> int:
         lines.extend(_render_prop_type_performance(resolved))
         lines.append("")
         lines.extend(_render_flag_performance(resolved))
+        lines.append("")
+        lines.extend(
+            _render_flag_performance(
+                displayed_resolved,
+                min_samples=8,
+                title=f"Displayed flag performance (score >= {settings.min_display_score})",
+            )
+        )
+        lines.append("")
+        lines.extend(
+            _render_policy_performance(
+                resolved,
+                display_score=settings.min_display_score,
+                discord_score=settings.discord_min_score,
+            )
+        )
+        lines.append("")
+        lines.extend(_render_slate_performance(resolved, settings.min_display_score))
+        lines.append("")
+        lines.extend(_render_rolling_performance(resolved, settings.min_display_score))
+        lines.append("")
+        lines.extend(_render_priced_performance(discord_policy_resolved))
         lines.append("")
         lines.extend(_render_resolution_methods(resolved))
         lines.append("")

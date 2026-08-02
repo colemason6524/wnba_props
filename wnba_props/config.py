@@ -32,6 +32,8 @@ DEFAULT_PROP_TYPES = [
     "3PM",
 ]
 
+DISCORD_SUPPRESS_FLAGS = frozenset({"SEASON-", "TEAM_OUT"})
+
 ESPN_TO_TEAM_ABBR = {
     "Atlanta Dream": "ATL",
     "Chicago Sky": "CHI",

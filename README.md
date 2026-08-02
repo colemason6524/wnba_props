@@ -13,7 +13,7 @@ Numbers-first daily WNBA prop screener for common player prop markets. The goal 
 ## Current stack
 
 - Slate: ESPN scoreboard
-- Lines: PlayerProps.ai no-key feed with FanDuel/DraftKings book lines; manual ingest fallback; direct sportsbook scrapers remain diagnostic
+- Lines: PlayerProps.ai no-key feed with FanDuel/DraftKings book lines and available over/under prices; manual ingest fallback; direct sportsbook scrapers remain diagnostic
 - Logs: Basketball-Reference, with ESPN boxscore fallback
 - Context: ESPN injuries plus ESPN odds when available
 - Notifications: Discord webhook embeds, gated separately from the terminal board
@@ -114,7 +114,7 @@ Send the daily picks digest to Discord:
 SEND_DISCORD=true WNBA_PROPS_DISCORD_WEBHOOK_URL=your_discord_webhook_url python3 run_nightly.py
 ```
 
-Discord defaults to `DISCORD_MIN_SCORE=8` and `DISCORD_LIMIT=8` per side, while the terminal board still uses `MIN_DISPLAY_SCORE=7` unless changed.
+Discord defaults to `DISCORD_MIN_SCORE=8` and `DISCORD_LIMIT=8` per side, while the terminal board still uses `MIN_DISPLAY_SCORE=7` unless changed. Candidates flagged `SEASON-` or `TEAM_OUT` remain on the research board and in history but are suppressed from Discord by default.
 
 Inspect the full board without sending Discord:
 
@@ -127,10 +127,12 @@ If Discord says there are no plays, use the full-board command to distinguish be
 ## Architecture decisions
 
 - **Separate WNBA repo:** this project copies lessons from NBA/MLB projects but stays independent so WNBA-specific data quirks, aliases, thresholds, and model tuning can evolve without disturbing the NBA project.
-- **No paid odds API dependency:** the default line source is the no-key PlayerProps.ai feed. The screener needs line values more than price/odds, so the model ignores sportsbook odds unless later work explicitly adds price-aware scoring.
+- **No paid odds API dependency:** the default line source is the no-key PlayerProps.ai feed. The screener still scores line value rather than price, but it now saves available PlayerProps over/under prices so future resolved runs can report flat-stake units and ROI.
 - **PlayerProps.ai is default; FanDuel/DraftKings direct sources are diagnostic:** FanDuel WNBA pages can return bot/captcha/CORS-challenged content, and DraftKings direct/headless paths have been unreliable. PlayerProps.ai book-labeled lines have been the most practical no-key source so far, but still need continued validation against sportsbook screens.
 - **Manual line fallback stays simple:** `LINE_SOURCE=manual` reads `config/manual_lines.csv` when the automated line feed is wrong, unavailable, or needs spot validation.
 - **Terminal board and Discord cutoff are intentionally different:** `MIN_DISPLAY_SCORE` controls what a user can inspect locally; `DISCORD_MIN_SCORE` controls what gets pushed as a notification. Discord defaults stricter to reduce noise.
+- **Risk-flagged props stay measurable:** `SEASON-` now carries a real score penalty, `TEAM_OUT` is treated as uncertainty rather than an automatic usage boost, and both flags are suppressed from Discord. They remain in saved candidate history as a shadow group for forward validation.
+- **Line-source failure is not a no-plays result:** a populated feed that cannot match the ESPN slate records structured diagnostics, writes a `screen_failure_*.json` snapshot, exits nonzero, and optionally sends a distinct Discord data-failure message.
 - **WNBA-specific Discord webhook variable:** use `WNBA_PROPS_DISCORD_WEBHOOK_URL` so this project does not hijack MLB tasks that may already use `DISCORD_WEBHOOK_URL`.
 - **Pregame-only by default:** `PREGAME_ONLY=true` drops games that have already started. Late-day manual runs may show a smaller slate or no eligible games.
 - **Regular-season log freshness allows league breaks:** `REGULAR_SEASON_LOG_STALE_DAYS=14` prevents the board from zeroing out after WNBA breaks. Playoff freshness remains tighter by default with `PLAYOFF_LOG_STALE_DAYS=2`.
@@ -302,6 +304,7 @@ Before pushing code changes, run at least:
 PYTHONPYCACHEPREFIX=.pycache python3 -m py_compile run_nightly.py backtest.py wnba_props/config.py wnba_props/output.py
 PYTHONPYCACHEPREFIX=.pycache python3 run_nightly.py --cache-report
 python3 preview_lines.py
+python3 -m unittest discover -s tests -v
 ```
 
 For a slate sanity check:
@@ -326,12 +329,13 @@ Important summary fields:
 - `Prop lines that qualified` is the full model-qualified set.
 - `Prop lines displayed` depends on `MIN_DISPLAY_SCORE`.
 - Discord only sends candidates at or above `DISCORD_MIN_SCORE`.
+- Discord also suppresses candidates carrying `SEASON-` or `TEAM_OUT`; backtest reports show the eligible group and suppressed shadow group separately.
 
 ## Notes
 
 - The first run may be slower because it builds local caches and Basketball-Reference player lookup entries.
 - WNBA Basketball-Reference player indexes use a different shape than NBA pages; this port handles the WNBA link-based index format.
-- The model needs line values, not sportsbook odds. `LINE_SOURCE=playerprops` is the default no-key line path and uses `PLAYERPROPS_BOOK=FANDUEL` unless changed.
+- The model scores line values rather than sportsbook prices. `LINE_SOURCE=playerprops` is the default no-key line path and uses `PLAYERPROPS_BOOK=FANDUEL` unless changed; available over/under prices are saved for later ROI reporting.
 - Use `PLAYERPROPS_BOOK=DRAFTKINGS` to switch the same feed to DraftKings-labeled lines.
 - PropCruncher ranking pages are not reliable sportsbook line inputs; they can be useful for source investigation only.
 - `LINE_SOURCE=manual` reads `config/manual_lines.csv` and is the cleanest source-independent fallback.
@@ -349,10 +353,13 @@ Important summary fields:
 - availability flags come from ESPN injury feeds for the slate teams and are intended as context, not automatic overrides
 - screen runs now write backtest-ready snapshots to `outputs/history/`
 - `python3 backtest.py` resolves finished props from stored runs and reports score-band, prop-type, and flag performance
+- new priced snapshots also report flat-stake units and ROI; older snapshots remain hit-rate-only because they did not store prices
 
 ## Debugging lessons learned
 
 - If Discord reports no plays, first check whether the run evaluated any props. After the WNBA break, the board initially showed no Discord plays because every player was skipped as `stale recent logs`; increasing regular-season log freshness fixed the actual issue.
+- If the line feed contains events but no lines match the slate, inspect the reported raw and normalized team pairs. The August 1, 2026 run lost an entire populated slate because PlayerProps used `LVA`/`NYL` while ESPN used `LV`/`NY`; those aliases are now covered by regression tests.
+- A line-source failure now sends a distinct operational message when Discord is enabled. It should not be interpreted as a normal model-qualified no-plays day.
 - `preview_lines.py` only proves line coverage. It does not load stats or prove the model evaluated candidates.
 - `MIN_DISPLAY_SCORE=0` is the safest manual inspection mode because it shows every model-qualified candidate without changing scoring.
 - `SEND_DISCORD=false` should be set for manual investigations to avoid duplicate notifications.
@@ -370,4 +377,5 @@ Important summary fields:
 - direct FanDuel/DraftKings scraping remains unreliable enough that it should not be considered the production line path
 - backtesting depends on saved `outputs/history/screen_run_*.json` files from the runtime machine; those files are not committed
 - injury and availability flags are context signals, not automatic hard excludes
-- no pricing or odds-value model is currently implemented
+- prices are captured when PlayerProps supplies them, but pricing does not yet affect candidate scoring and older snapshots cannot produce ROI
+- the `SEASON-`/`TEAM_OUT` suppression policy was selected from a small historical sample and must be evaluated prospectively through the saved shadow group

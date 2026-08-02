@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from statistics import mean
 from typing import Iterable
+
+from .config import DISCORD_SUPPRESS_FLAGS
 from .models import Candidate, PlayerGameLog, PropLine, TeamInjury
 
 
@@ -86,6 +88,7 @@ def _render_table(candidates: list[Candidate]) -> list[str]:
         "Prop",
         "Side",
         "Line",
+        "Odds",
         "Spread",
         "Total",
         "OppAvg",
@@ -112,6 +115,7 @@ def _render_table(candidates: list[Candidate]) -> list[str]:
             candidate.prop_type,
             candidate.side,
             f"{candidate.line:.1f}",
+            _format_american_odds(candidate.american_odds),
             "" if candidate.spread is None else f"{candidate.spread:+.1f}",
             "" if candidate.total is None else f"{candidate.total:.1f}",
             "" if candidate.opp_avg is None else f"{candidate.opp_avg:.1f}",
@@ -214,17 +218,24 @@ def render_discord_embeds(
     min_score: int = 8,
     limit: int = 8,
 ) -> list[dict]:
-    items = sorted(
+    score_items = sorted(
         [candidate for candidate in candidates if candidate.score >= min_score],
         key=_discord_sort_key,
         reverse=True,
     )
+    suppressed = [
+        candidate
+        for candidate in score_items
+        if any(flag in DISCORD_SUPPRESS_FLAGS for flag in candidate.flags)
+    ]
+    items = [candidate for candidate in score_items if candidate not in suppressed]
     overs = [candidate for candidate in items if candidate.side == "OVER"][:limit]
     unders = [candidate for candidate in items if candidate.side == "UNDER"][:limit]
     description = (
         f"{prop_line_count} lines across {games_count} games. "
         f"{qualified_count} qualified, {displayed_count} shown on board. "
-        f"Source `{line_source}` / `{bookmaker}`. Discord cutoff `{min_score}+`."
+        f"Source `{line_source}` / `{bookmaker}`. Discord cutoff `{min_score}+`. "
+        f"{len(suppressed)} risk-flagged plays suppressed."
     )
     embed = {
         "title": f"WNBA Props - {screen_date}",
@@ -238,7 +249,10 @@ def render_discord_embeds(
         embed["fields"].append(
             {
                 "name": "No Discord plays",
-                "value": f"No props cleared the Discord score cutoff of {min_score}.",
+                "value": (
+                    f"No props cleared the Discord policy (score {min_score}+ with none of "
+                    f"{', '.join(sorted(DISCORD_SUPPRESS_FLAGS))})."
+                ),
                 "inline": False,
             }
         )
@@ -276,8 +290,9 @@ def _discord_candidate_value(candidate: Candidate) -> str:
     if candidate.total is not None:
         market.append(f"Total `{candidate.total:.1f}`")
     market_text = " | ".join(market) if market else "Market `-`"
+    price_text = _format_american_odds(candidate.american_odds) or "-"
     return (
-        f"{candidate.team} vs {candidate.opponent} | {candidate.bookmaker}\n"
+        f"{candidate.team} vs {candidate.opponent} | {candidate.bookmaker} | Odds `{price_text}`\n"
         f"L5 `{candidate.hits_last_5}/{candidate.played_last_5}` | "
         f"L10 `{candidate.hits_last_10}/{candidate.played_last_10}` | "
         f"Avg L5 `{candidate.avg_last_5:.1f}` | Avg L10 `{candidate.avg_last_10:.1f}` | "
@@ -332,6 +347,12 @@ def _hit_cell(hits: int, played: int) -> str:
 
 def _avg_cell(values: list[float]) -> str:
     return f"{mean(values):.1f}" if values else ""
+
+
+def _format_american_odds(value: int | None) -> str:
+    if value is None:
+        return ""
+    return f"{value:+d}"
 
 
 def _get_prop_value(log: PlayerGameLog, prop_type: str) -> int:
