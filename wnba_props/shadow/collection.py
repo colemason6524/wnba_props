@@ -60,18 +60,52 @@ def projection_id(projection: dict[str, Any]) -> str:
 
 
 class CaptureRegistry:
-    """Small shadow-only state file preventing accidental duplicate game captures."""
+    """Shadow-only state separating material attempts from completed captures.
 
-    SCHEMA_VERSION = 1
+    An attempt is recorded for every run that entered the capture path, even
+    partial or failed ones, so later no-op runs cannot hide an eligible-window
+    failure. A game is marked complete only when all of its fetched PTS lines
+    received a projection or a deterministic exclusion.
+    """
+
+    SCHEMA_VERSION = 2
 
     def __init__(self, path: Path) -> None:
         self.path = path
         self._payload = self._load()
 
     def is_captured(self, *, game_id: str, model_version: str, line_source: str) -> bool:
-        return self._key(game_id, model_version, line_source) in self._payload["captures"]
+        return self._key(game_id, model_version, line_source) in self._payload["completed"]
 
-    def mark_captured(
+    def record_attempt(
+        self,
+        *,
+        games: Iterable[Game],
+        model_version: str,
+        line_source: str,
+        snapshot_path: Path | None,
+        captured_at: datetime,
+        outcomes: dict[str, str],
+    ) -> None:
+        attempt = {
+            "attempted_at": captured_at.isoformat(),
+            "model_version": model_version,
+            "line_source": line_source,
+            "snapshot_path": str(snapshot_path.resolve()) if snapshot_path else None,
+            "games": [
+                {
+                    "game_id": game.game_id,
+                    "game_time": game.game_time.isoformat(),
+                    "capture_lead_minutes": capture_lead_minutes(game.game_time, captured_at),
+                    "outcome": outcomes.get(game.game_id, "unknown"),
+                }
+                for game in games
+            ],
+        }
+        self._payload["attempts"].append(attempt)
+        self._write()
+
+    def mark_complete(
         self,
         *,
         games: Iterable[Game],
@@ -81,7 +115,7 @@ class CaptureRegistry:
         captured_at: datetime,
     ) -> None:
         for game in games:
-            self._payload["captures"][self._key(game.game_id, model_version, line_source)] = {
+            self._payload["completed"][self._key(game.game_id, model_version, line_source)] = {
                 "game_id": game.game_id,
                 "game_time": game.game_time.isoformat(),
                 "model_version": model_version,
@@ -94,13 +128,24 @@ class CaptureRegistry:
 
     def _load(self) -> dict[str, Any]:
         if not self.path.exists():
-            return {"schema_version": self.SCHEMA_VERSION, "captures": {}}
+            return {"schema_version": self.SCHEMA_VERSION, "attempts": [], "completed": {}}
         payload = json.loads(self.path.read_text())
-        if payload.get("schema_version") != self.SCHEMA_VERSION:
+        schema_version = payload.get("schema_version")
+        if schema_version == 1:
+            return {
+                "schema_version": self.SCHEMA_VERSION,
+                "attempts": [],
+                "completed": payload.get("captures", {}),
+            }
+        if schema_version != self.SCHEMA_VERSION:
             raise ValueError(f"unsupported capture registry schema: {self.path}")
-        if not isinstance(payload.get("captures"), dict):
+        if not isinstance(payload.get("completed"), dict):
             raise ValueError(f"invalid capture registry: {self.path}")
-        return payload
+        return {
+            "schema_version": self.SCHEMA_VERSION,
+            "attempts": payload.get("attempts", []),
+            "completed": payload.get("completed", {}),
+        }
 
     def _write(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)

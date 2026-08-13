@@ -4,8 +4,17 @@ import unittest
 from datetime import date, datetime, timedelta, timezone
 
 from wnba_props.models import PlayerGameLog, PropLine
-from wnba_props.shadow.pricing import expected_profit_units, implied_probability
-from wnba_props.shadow.projection import ProjectionConfig, project_points_line
+from wnba_props.shadow.pricing import (
+    expected_profit_units,
+    implied_probability,
+    is_valid_price,
+    normalize_odds,
+)
+from wnba_props.shadow.projection import (
+    ProjectionConfig,
+    config_signature,
+    project_points_line,
+)
 from wnba_props.shadow.sources import ShadowEspnSlateSource
 
 
@@ -154,6 +163,23 @@ class ShadowProjectionTests(unittest.TestCase):
         )
 
         self.assertIsNone(projection)
+
+    def test_config_signature_is_deterministic_and_sensitive(self) -> None:
+        self.assertEqual(config_signature(ProjectionConfig()), config_signature(ProjectionConfig()))
+        self.assertNotEqual(
+            config_signature(ProjectionConfig(simulations=10_000)),
+            config_signature(ProjectionConfig(simulations=1_000)),
+        )
+
+    def test_price_validation_helpers(self) -> None:
+        self.assertTrue(is_valid_price(-110))
+        self.assertTrue(is_valid_price(150))
+        self.assertFalse(is_valid_price(0))
+        self.assertFalse(is_valid_price(None))
+        self.assertEqual(-110, normalize_odds(-110))
+        self.assertEqual(150, normalize_odds("150"))
+        self.assertIsNone(normalize_odds(0))
+        self.assertIsNone(normalize_odds(None))
 
     def test_shadow_slate_parser_is_isolated_and_normalizes_teams(self) -> None:
         games = ShadowEspnSlateSource.parse_games(

@@ -120,6 +120,100 @@ class ShadowGradingTests(unittest.TestCase):
         self.assertEqual(20, row.points)
         self.assertEqual(2, row.threes_made)
 
+    def test_boxscore_parser_ignores_groups_without_min_and_pts(self) -> None:
+        parsed = ShadowEspnBoxscoreSource.parse_boxscore(
+            {
+                "boxscore": {
+                    "players": [
+                        {
+                            "team": {"displayName": "New York Liberty"},
+                            "statistics": [
+                                {
+                                    "labels": ["FG", "3PT"],
+                                    "athletes": [
+                                        {
+                                            "athlete": {"displayName": "Bad Player"},
+                                            "stats": ["1-1", "0-0"],
+                                        }
+                                    ],
+                                },
+                                {
+                                    "labels": ["MIN", "PTS"],
+                                    "athletes": [
+                                        {
+                                            "athlete": {"displayName": "Test Player"},
+                                            "stats": ["30.0", "18"],
+                                        }
+                                    ],
+                                },
+                            ],
+                        }
+                    ]
+                }
+            }
+        )
+
+        self.assertNotIn(("bad player", "NY"), parsed)
+        self.assertIn(("test player", "NY"), parsed)
+
+    def test_boxscore_parser_keeps_first_player_row(self) -> None:
+        parsed = ShadowEspnBoxscoreSource.parse_boxscore(
+            {
+                "boxscore": {
+                    "players": [
+                        {
+                            "team": {"displayName": "New York Liberty"},
+                            "statistics": [
+                                {
+                                    "labels": ["MIN", "PTS"],
+                                    "athletes": [
+                                        {
+                                            "athlete": {"displayName": "Test Player"},
+                                            "stats": ["30.0", "18"],
+                                        }
+                                    ],
+                                },
+                                {
+                                    "labels": ["MIN", "PTS"],
+                                    "athletes": [
+                                        {
+                                            "athlete": {"displayName": "Test Player"},
+                                            "stats": ["0.0", "0"],
+                                        }
+                                    ],
+                                },
+                            ],
+                        }
+                    ]
+                }
+            }
+        )
+
+        self.assertEqual(30.0, parsed[("test player", "NY")].minutes)
+        self.assertEqual(18, parsed[("test player", "NY")].points)
+
+    def test_brier_uses_conditional_over_probability(self) -> None:
+        projection = _projection(player="Cond Player", line=15.0)
+        projection["over_probability"] = 0.50
+        projection["under_probability"] = 0.40
+        projection["push_probability"] = 0.10
+        report = grade_shadow_projections(
+            [projection],
+            game_statuses={
+                "final-game": ShadowGameStatus("final-game", "post", True, "Final")
+            },
+            boxscores={
+                "final-game": {
+                    ("cond player", "NY"): _stat_line("Cond Player", minutes=30.0, points=20)
+                }
+            },
+        )
+
+        grade = report["graded"][0]
+        conditional_over = 0.50 / 0.90
+        self.assertAlmostEqual((conditional_over - 1.0) ** 2, grade["over_brier_score"], places=6)
+        self.assertAlmostEqual((0.50 - 1.0) ** 2, grade["over_brier_score_unconditional"], places=6)
+
     def test_final_pending_dnp_and_missing_player_are_kept_distinct(self) -> None:
         projections = [
             _projection(player="Winner"),

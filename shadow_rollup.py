@@ -90,8 +90,10 @@ def _enrich_legacy_report(report: dict[str, Any]) -> dict[str, Any]:
         for item in snapshot.get("projections", [])
     }
     enriched_rows = []
+    snapshot_config_hash = str(snapshot.get("model_config_hash", ""))
     for original in report.get("graded", []):
         row = dict(original)
+        row.setdefault("model_config_hash", snapshot_config_hash)
         projection = projections.get(
             (
                 str(row.get("game_id", "")),

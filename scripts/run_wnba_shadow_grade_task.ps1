@@ -13,15 +13,52 @@ function Write-ShadowLog {
     Add-Content -Path $LogPath -Value "$Timestamp  $Message"
 }
 
+function Write-ShadowLogBlock {
+    param([string]$Message)
+    if ([string]::IsNullOrWhiteSpace($Message)) { return }
+    $Message -split "`r?`n" | ForEach-Object {
+        if (-not [string]::IsNullOrWhiteSpace($_)) {
+            Write-ShadowLog $_
+        }
+    }
+}
+
 function Invoke-ShadowCommand {
     param([string[]]$Arguments)
-    $Output = & $PythonExe $Arguments 2>&1
-    $ExitCode = $LASTEXITCODE
-    foreach ($Line in $Output) {
-        Write-ShadowLog ([string]$Line)
+
+    # Capture native stdout/stderr through temp files so ordinary Python
+    # progress on stderr cannot become a terminating PowerShell error.
+    $TempBase = Join-Path ([System.IO.Path]::GetTempPath()) ("wnba_shadow_grade_{0}" -f [guid]::NewGuid().ToString("N"))
+    $TempOut = "$TempBase.out.log"
+    $TempErr = "$TempBase.err.log"
+
+    try {
+        $Process = Start-Process `
+            -FilePath $PythonExe `
+            -ArgumentList $Arguments `
+            -WorkingDirectory $ProjectDir `
+            -Wait `
+            -PassThru `
+            -RedirectStandardOutput $TempOut `
+            -RedirectStandardError $TempErr
+
+        foreach ($Path in @($TempOut, $TempErr)) {
+            if (Test-Path $Path) {
+                Get-Content -Path $Path | ForEach-Object {
+                    if (-not [string]::IsNullOrWhiteSpace($_)) {
+                        Write-ShadowLog $_
+                    }
+                }
+            }
+        }
+
+        if ($Process.ExitCode -ne 0) {
+            throw "Command failed with exit code $($Process.ExitCode): $PythonExe $($Arguments -join ' ')"
+        }
     }
-    if ($ExitCode -ne 0) {
-        throw "Command failed with exit code $ExitCode`: $PythonExe $($Arguments -join ' ')"
+    finally {
+        Remove-Item -Path $TempOut -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path $TempErr -Force -ErrorAction SilentlyContinue
     }
 }
 

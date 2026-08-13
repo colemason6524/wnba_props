@@ -170,8 +170,8 @@ class ShadowEspnBoxscoreSource:
 
     def fetch_boxscore(self, event_id: str) -> dict[tuple[str, str], ShadowBoxscoreStatLine]:
         cache_key = f"espn_final_boxscore_{event_id}"
-        cached = self.cache.get_stale(cache_key)
-        if cached is not None:
+        cached = self.cache.get(cache_key)
+        if cached:
             return {
                 (item["player_name_norm"], item["team"]): ShadowBoxscoreStatLine(**item)
                 for item in cached
@@ -182,7 +182,8 @@ class ShadowEspnBoxscoreSource:
             headers=self.HEADERS,
         )
         parsed = self.parse_boxscore(payload)
-        self.cache.set(cache_key, [stat_line.__dict__ for stat_line in parsed.values()])
+        if parsed:
+            self.cache.set(cache_key, [stat_line.__dict__ for stat_line in parsed.values()])
         return parsed
 
     @staticmethod
@@ -200,7 +201,7 @@ class ShadowEspnBoxscoreSource:
 
             for stat_group in team_block.get("statistics", []):
                 labels = [str(label).strip().upper() for label in stat_group.get("labels", [])]
-                if not labels:
+                if "MIN" not in labels or "PTS" not in labels:
                     continue
                 for athlete_row in stat_group.get("athletes", []):
                     athlete = athlete_row.get("athlete", {}) or {}
@@ -223,7 +224,7 @@ class ShadowEspnBoxscoreSource:
                         assists=safe_int(stat_map.get("AST")),
                         threes_made=_parse_threes_made(stat_map.get("3PT", "0")),
                     )
-                    parsed[(stat_line.player_name_norm, stat_line.team)] = stat_line
+                    parsed.setdefault((stat_line.player_name_norm, stat_line.team), stat_line)
         return parsed
 
 

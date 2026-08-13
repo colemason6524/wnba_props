@@ -1,3 +1,7 @@
+param(
+    [string[]]$PyArgs = @("run_projection_shadow.py")
+)
+
 $ErrorActionPreference = "Stop"
 
 $ProjectDir = Split-Path -Parent $PSScriptRoot
@@ -13,16 +17,61 @@ function Write-ShadowLog {
     Add-Content -Path $LogPath -Value "$Timestamp  $Message"
 }
 
+function Write-ShadowLogBlock {
+    param([string]$Message)
+    if ([string]::IsNullOrWhiteSpace($Message)) { return }
+    $Message -split "`r?`n" | ForEach-Object {
+        if (-not [string]::IsNullOrWhiteSpace($_)) {
+            Write-ShadowLog $_
+        }
+    }
+}
+
+function Invoke-ShadowPython {
+    param([string[]]$Arguments)
+
+    # Native stderr must never become a PowerShell terminating error under
+    # $ErrorActionPreference = "Stop". Capture stdout/stderr through temp files
+    # (the same proven pattern the production wrapper uses) and return Python's
+    # real exit code.
+    $TempBase = Join-Path ([System.IO.Path]::GetTempPath()) ("wnba_shadow_capture_{0}" -f [guid]::NewGuid().ToString("N"))
+    $TempOut = "$TempBase.out.log"
+    $TempErr = "$TempBase.err.log"
+
+    try {
+        $Process = Start-Process `
+            -FilePath $PythonExe `
+            -ArgumentList $Arguments `
+            -WorkingDirectory $ProjectDir `
+            -Wait `
+            -PassThru `
+            -RedirectStandardOutput $TempOut `
+            -RedirectStandardError $TempErr
+
+        foreach ($Path in @($TempOut, $TempErr)) {
+            if (Test-Path $Path) {
+                Get-Content -Path $Path | ForEach-Object {
+                    if (-not [string]::IsNullOrWhiteSpace($_)) {
+                        Write-ShadowLog $_
+                    }
+                }
+            }
+        }
+
+        return $Process.ExitCode
+    }
+    finally {
+        Remove-Item -Path $TempOut -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path $TempErr -Force -ErrorAction SilentlyContinue
+    }
+}
+
 Write-ShadowLog "Starting isolated WNBA shadow capture"
 Write-ShadowLog "ProjectDir: $ProjectDir"
 
 Push-Location $ProjectDir
 try {
-    $Output = & $PythonExe "run_projection_shadow.py" 2>&1
-    $ExitCode = $LASTEXITCODE
-    foreach ($Line in $Output) {
-        Write-ShadowLog ([string]$Line)
-    }
+    $ExitCode = Invoke-ShadowPython -Arguments $PyArgs
     Write-ShadowLog "Finished isolated WNBA shadow capture with exit code $ExitCode"
     exit $ExitCode
 }

@@ -86,6 +86,9 @@ def summarize_grades(
     selected = [row for row in graded if row["model_side"] in {"OVER", "UNDER"}]
     selected_decisions = [row for row in selected if row["selection_outcome"] != "push"]
     priced = [row for row in selected if row["profit_units"] is not None]
+    price_evaluable = [row for row in selected if row["price_evaluable"]]
+    unpriced = [row for row in selected if not row["price_evaluable"]]
+    passed = [row for row in graded if row["model_side"] not in {"OVER", "UNDER"}]
     brier_rows = [row for row in graded if row["over_brier_score"] is not None]
 
     wins = sum(1 for row in selected if row["selection_outcome"] == "win")
@@ -110,11 +113,17 @@ def summarize_grades(
         "over_brier_score": _rounded_mean(
             [float(row["over_brier_score"]) for row in brier_rows]
         ),
+        "over_brier_score_unconditional": _rounded_mean(
+            [float(row["over_brier_score_unconditional"]) for row in brier_rows]
+        ),
         "selected_count": len(selected),
         "selected_wins": wins,
         "selected_losses": losses,
         "selected_pushes": pushes,
         "selected_hit_rate": round(wins / len(selected_decisions), 4) if selected_decisions else None,
+        "price_evaluable_selected_count": len(price_evaluable),
+        "unpriced_selected_count": len(unpriced),
+        "pass_count": len(passed),
         "priced_selected_count": len(priced),
         "flat_stake_units": round(units, 4) if priced else None,
         "flat_stake_roi": round(units / len(priced), 4) if priced else None,
@@ -126,7 +135,13 @@ def calibration_buckets(graded: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for row in graded:
         if row["actual_over"] is None:
             continue
-        probability = min(1.0, max(0.0, float(row["over_probability"])))
+        probability = min(
+            1.0,
+            max(
+                0.0,
+                float(row.get("conditional_over_probability", row["over_probability"])),
+            ),
+        )
         bucket_index = min(9, int(probability * 10.0))
         buckets[bucket_index].append(row)
 
@@ -140,7 +155,11 @@ def calibration_buckets(graded: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "bucket": f"{lower:.1f}-{upper:.1f}",
                 "count": len(rows),
                 "average_predicted_over_probability": round(
-                    mean(float(row["over_probability"]) for row in rows), 4
+                    mean(
+                        float(row.get("conditional_over_probability", row["over_probability"]))
+                        for row in rows
+                    ),
+                    4,
                 ),
                 "actual_over_rate": round(
                     mean(1.0 if row["actual_over"] else 0.0 for row in rows), 4
@@ -204,8 +223,10 @@ def _grade_projection(
     points_error = actual_points - projected_mean
     minutes_error = stat_line.minutes - projected_minutes
     over_probability = float(projection["over_probability"])
+    conditional_over = _conditional_over_probability(projection)
     actual_over = None if actual_outcome == "push" else actual_outcome == "over"
-    brier = None if actual_over is None else (over_probability - float(actual_over)) ** 2
+    brier = None if actual_over is None else (conditional_over - float(actual_over)) ** 2
+    brier_unconditional = None if actual_over is None else (over_probability - float(actual_over)) ** 2
     capture_lead = _capture_lead(projection)
 
     return {
@@ -231,6 +252,7 @@ def _grade_projection(
         "over_probability": over_probability,
         "under_probability": float(projection["under_probability"]),
         "push_probability": float(projection.get("push_probability", 0.0)),
+        "conditional_over_probability": round(conditional_over, 6),
         "model_side": model_side,
         "decision": projection.get("decision", "RESEARCH_ONLY"),
         "actual_minutes": round(stat_line.minutes, 4),
@@ -242,8 +264,12 @@ def _grade_projection(
         "projection_error_minutes": round(minutes_error, 4),
         "absolute_error_minutes": round(abs(minutes_error), 4),
         "over_brier_score": round(brier, 6) if brier is not None else None,
+        "over_brier_score_unconditional": (
+            round(brier_unconditional, 6) if brier_unconditional is not None else None
+        ),
         "selection_outcome": selection_outcome,
         "selected_odds": selected_odds,
+        "price_evaluable": selected_odds is not None,
         "profit_units": _rounded_optional(settled_profit_units(selection_outcome, selected_odds)),
         "resolution_source": "espn_final_boxscore_shadow",
     }
@@ -295,6 +321,21 @@ def _rounded_rmse(values: list[float]) -> float | None:
 
 def _rounded_optional(value: float | None) -> float | None:
     return round(value, 4) if value is not None else None
+
+
+def _conditional_over_probability(projection: dict[str, Any]) -> float:
+    raw = projection.get("conditional_over_probability")
+    if raw is not None:
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            pass
+    over = float(projection.get("over_probability", 0.0))
+    under = float(projection.get("under_probability", 0.0))
+    non_push = over + under
+    if non_push > 0.0:
+        return over / non_push
+    return 0.5
 
 
 def _capture_lead(projection: dict[str, Any]) -> float | None:

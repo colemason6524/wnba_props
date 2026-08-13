@@ -110,7 +110,11 @@ def _is_terminal_report(report: dict[str, Any]) -> bool:
     summary = report.get("summary", {})
     if int(summary.get("pending_count", 0)) > 0:
         return False
-    retryable_reasons = {"game_status_missing", "final_boxscore_unavailable"}
+    retryable_reasons = {
+        "game_status_missing",
+        "final_boxscore_unavailable",
+        "final_boxscore_player_missing",
+    }
     return not any(
         item.get("reason") in retryable_reasons
         for item in report.get("unresolved", [])
@@ -141,7 +145,7 @@ def _grade_snapshots(
         )
 
     boxscore_source = ShadowEspnBoxscoreSource(
-        JsonCache(CACHE_DIR / "shadow" / "grading", ttl_hours=24 * 365)
+        JsonCache(CACHE_DIR / "shadow" / "grading", ttl_hours=6)
     )
     boxscores = {}
     boxscore_error_by_game = {}
@@ -164,11 +168,13 @@ def _grade_snapshots(
         report = {
             "mode": "shadow_projection_grade",
             "research_only": True,
+            "metric_schema_version": 2,
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "source_snapshot": str(snapshot_path.resolve()),
             "source_snapshot_id": snapshot.get("snapshot_id"),
             "source_exported_at": snapshot.get("exported_at"),
             "source_capture_policy": snapshot.get("capture_policy"),
+            "source_model_config_hash": snapshot.get("model_config_hash"),
             "screen_date": screen_date.isoformat(),
             "model_version": snapshot.get("model_version"),
             "boxscore_fetch_errors": [

@@ -92,6 +92,25 @@ class ShadowRollupTests(unittest.TestCase):
         self.assertEqual(7, rollup["primary_pregame"]["slate_count"])
         self.assertEqual("READY_FOR_REVIEW", rollup["evidence_gate"]["status"])
 
+    def test_evidence_gate_marks_mixed_models(self) -> None:
+        rows = []
+        for index in range(100):
+            rows.append(
+                _row(
+                    player=f"player-{index}",
+                    lead=30.0,
+                    game_id=f"game-{index % 20}",
+                    screen_date=f"2026-08-{5 + (index % 7):02d}",
+                )
+            )
+        for index, row in enumerate(rows):
+            row["model_config_hash"] = "hash-a" if index % 2 == 0 else "hash-b"
+
+        rollup = build_shadow_rollup([{"graded": rows}])
+
+        self.assertEqual("MIXED_MODELS", rollup["evidence_gate"]["status"])
+        self.assertEqual(2, len(rollup["model_breakdown"]))
+
 
 if __name__ == "__main__":
     unittest.main()

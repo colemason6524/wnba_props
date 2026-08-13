@@ -3,15 +3,17 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 import tempfile
+from collections import defaultdict
 from dataclasses import asdict
 from datetime import date, datetime, timezone
 from pathlib import Path
 
 from run_nightly import _load_player_logs, season_end_year
 from wnba_props.cache import JsonCache
-from wnba_props.config import CACHE_DIR, OUTPUTS_DIR, load_settings
+from wnba_props.config import CACHE_DIR, OUTPUTS_DIR, ROOT, load_settings
 from wnba_props.models import Game, PropLine
 from wnba_props.shadow import MODEL_VERSION, ProjectionConfig, project_points_line
 from wnba_props.shadow.collection import (
@@ -22,6 +24,7 @@ from wnba_props.shadow.collection import (
     select_games_in_capture_window,
 )
 from wnba_props.shadow.output import render_shadow_board
+from wnba_props.shadow.projection import config_signature
 from wnba_props.shadow.sources import ShadowEspnSlateSource, ShadowGameContext
 from wnba_props.sources.basketball_reference import BasketballReferenceSource
 from wnba_props.sources.espn_gamelog import EspnGameLogSource
@@ -31,6 +34,14 @@ from wnba_props.sources.manual_lines import ManualLineSource
 from wnba_props.sources.playerprops import PlayerPropsSource
 from wnba_props.utils import normalize_name
 
+LINE_PROJECTED = "projected"
+LINE_EXCLUDED = "excluded"
+LINE_LOG_FAILURE = "log_failure"
+LINE_NO_LOGS = "no_logs"
+LINE_NO_GAME_MATCH = "no_game_match"
+
+TRANSIENT_LINE_STATUSES = {LINE_LOG_FAILURE, LINE_NO_LOGS, LINE_NO_GAME_MATCH}
+
 
 def main() -> int:
     args = _parse_args()
@@ -38,6 +49,9 @@ def main() -> int:
     if args.screen_date:
         settings.screen_date = date.fromisoformat(args.screen_date)
     settings.supported_prop_types = ["PTS"]
+
+    config = ProjectionConfig(simulations=args.simulations)
+    code_commit, code_dirty = _git_state()
 
     shadow_cache_root = CACHE_DIR / "shadow"
     shared_cache = JsonCache(shadow_cache_root / "shared", ttl_hours=settings.cache_ttl_hours)
@@ -59,6 +73,28 @@ def main() -> int:
         print("Supported SHADOW_LINE_SOURCE values: playerprops, manual.", file=sys.stderr)
         return 1
 
+    health: dict = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "screen_date": settings.screen_date.isoformat(),
+        "model_version": MODEL_VERSION,
+        "model_config_hash": config_signature(config),
+        "line_source": line_source_name,
+        "code_commit": code_commit,
+        "code_dirty": code_dirty,
+        "outcome": "error",
+        "eligible_games": 0,
+        "completed_games": [],
+        "projections": 0,
+        "both_side_priced": 0,
+        "both_side_price_rate": None,
+        "failures": [],
+        "exit_code": 1,
+    }
+
+    capture_time = datetime.now(timezone.utc)
+    registry: CaptureRegistry | None = None
+    games: list[Game] = []
+    attempt_recorded = False
     slate_source = ShadowEspnSlateSource()
     try:
         all_games = slate_source.fetch_games(settings.screen_date)
@@ -77,7 +113,11 @@ def main() -> int:
             line_source=line_source_name,
             force_recapture=args.force_recapture,
         )
+        health["eligible_games"] = len(games)
         if not games:
+            health["outcome"] = "no_window"
+            health["exit_code"] = 0
+            _record_health(health)
             print(
                 "No uncaptured WNBA games are currently inside the shadow capture window "
                 f"({capture_window.minimum_lead_minutes:.0f}-"
@@ -87,11 +127,24 @@ def main() -> int:
 
         prop_lines = [line for line in line_source.fetch_prop_lines(games) if line.prop_type == "PTS"]
         if not prop_lines:
+            if not args.include_started:
+                registry.record_attempt(
+                    games=games,
+                    model_version=MODEL_VERSION,
+                    line_source=line_source_name,
+                    snapshot_path=None,
+                    captured_at=capture_time,
+                    outcomes={game.game_id: "no_lines" for game in games},
+                )
+                attempt_recorded = True
+            health["outcome"] = "no_lines"
+            health["failures"] = sorted(set(getattr(line_source, "failures", [])))
+            _record_health(health)
             print("No PTS lines found for the shadow run.", file=sys.stderr)
             return 1
 
         odds_contexts = slate_source.game_contexts
-        injuries_by_team = _load_injuries(injuries_cache, games, settings.screen_date)
+        injuries_by_team, injury_errors = _load_injuries(injuries_cache, games, settings.screen_date)
         statuses = {
             (team, injury.player_name_norm): injury.status
             for team, injuries in injuries_by_team.items()
@@ -107,6 +160,9 @@ def main() -> int:
         projections = []
         game_by_id = {game.game_id: game for game in games}
 
+        line_outcomes: dict[str, list[str]] = defaultdict(list)
+        transient_by_game: dict[str, bool] = defaultdict(bool)
+
         with tempfile.TemporaryDirectory(prefix="wnba-shadow-refresh-") as refresh_dir:
             refresh_cache = JsonCache(Path(refresh_dir), ttl_hours=settings.cache_ttl_hours)
             refresh_logs_source = BasketballReferenceSource(refresh_cache, sticky_daily_cache=False)
@@ -117,6 +173,7 @@ def main() -> int:
             for index, line in enumerate(prop_lines, start=1):
                 player_name = settings.player_aliases.get(line.player_name_raw, line.player_name_raw)
                 player_key = normalize_name(line.player_name_raw)
+                failure = None
                 if player_key not in loaded_logs:
                     print(
                         f"Loading shadow logs {index}/{len(prop_lines)}: {player_name} ({line.team})",
@@ -140,11 +197,19 @@ def main() -> int:
                         failures.append(failure)
                 logs = loaded_logs.get(player_key, [])
                 if not logs:
+                    if failure:
+                        line_outcomes[line.event_id].append(LINE_LOG_FAILURE)
+                        transient_by_game[line.event_id] = True
+                    else:
+                        line_outcomes[line.event_id].append(LINE_NO_LOGS)
+                        transient_by_game[line.event_id] = True
                     continue
 
                 game = game_by_id.get(line.event_id)
                 if game is None:
                     failures.append(f"{line.player_name_raw}: no matching ESPN game")
+                    line_outcomes[line.event_id].append(LINE_NO_GAME_MATCH)
+                    transient_by_game[line.event_id] = True
                     continue
                 game_context = _resolve_game_context(odds_contexts, line.team, line.opponent)
                 projection = project_points_line(
@@ -155,12 +220,25 @@ def main() -> int:
                     team_spread=_team_spread(line.team, game_context),
                     game_total=game_context.total if game_context else None,
                     player_status=statuses.get((line.team, player_key), ""),
-                    config=ProjectionConfig(simulations=args.simulations),
+                    config=config,
                 )
                 if projection is None:
                     failures.append(f"{line.player_name_raw}: insufficient eligible history or unavailable")
+                    line_outcomes[line.event_id].append(LINE_EXCLUDED)
                     continue
                 projections.append(projection)
+                line_outcomes[line.event_id].append(LINE_PROJECTED)
+
+        for team, error in injury_errors.items():
+            failures.append(f"injuries unavailable for {team}: {error}")
+            for game in games:
+                if team in {game.home_team, game.away_team}:
+                    transient_by_game[game.game_id] = True
+
+        for game in games:
+            if _collected_too_late(game, prop_lines, capture_window.minimum_lead_minutes):
+                failures.append(f"{game.away_team}@{game.home_team}: lines collected below minimum lead")
+                transient_by_game[game.game_id] = True
 
         print(render_shadow_board(projections))
         export_path = _export_shadow_snapshot(
@@ -170,33 +248,85 @@ def main() -> int:
             projections=projections,
             game_contexts=odds_contexts,
             failures=sorted(set(failures)),
-            simulations=args.simulations,
+            config=config,
             line_source=line_source_name,
             line_source_diagnostics=dict(getattr(line_source, "diagnostics", {})),
             capture_window=capture_window,
             strict_pregame=not args.include_started,
+            code_commit=code_commit,
+            code_dirty=code_dirty,
+            injury_errors=dict(injury_errors),
         )
+
+        outcomes = {
+            game.game_id: _game_outcome(line_outcomes.get(game.game_id, []), transient_by_game[game.game_id])
+            for game in games
+        }
+        complete_games = [game for game in games if outcomes[game.game_id] == "complete"]
+
         if not args.include_started:
-            captured_game_ids = {projection.game_id for projection in projections}
-            registry.mark_captured(
-                games=[game for game in games if game.game_id in captured_game_ids],
+            registry.record_attempt(
+                games=games,
                 model_version=MODEL_VERSION,
                 line_source=line_source_name,
                 snapshot_path=export_path,
                 captured_at=capture_time,
+                outcomes=outcomes,
             )
+            attempt_recorded = True
+            if complete_games:
+                registry.mark_complete(
+                    games=complete_games,
+                    model_version=MODEL_VERSION,
+                    line_source=line_source_name,
+                    snapshot_path=export_path,
+                    captured_at=capture_time,
+                )
+
+        both_side_priced = sum(1 for item in projections if item.price_status == "BOTH_SIDES_PRICED")
+        health.update(
+            {
+                "outcome": _rollup_outcome(outcomes),
+                "completed_games": [game.game_id for game in complete_games],
+                "projections": len(projections),
+                "both_side_priced": both_side_priced,
+                "both_side_price_rate": round(both_side_priced / len(projections), 4) if projections else None,
+                "failures": sorted(set(failures)),
+                "exit_code": 0,
+            }
+        )
+        _record_health(health)
+
         print("")
         print("Shadow summary:")
         print(f"- Eligible games: {len(games)}")
         print(f"- PTS lines: {len(prop_lines)}")
         print(f"- Projections produced: {len(projections)}")
-        print(f"- Both-side prices: {sum(1 for item in projections if item.price_status == 'BOTH_SIDES_PRICED')}")
+        print(f"- Both-side prices: {both_side_priced}")
         print(f"- Games with spread/total context: {len(odds_contexts)}")
         print(f"- Research-only output: {export_path}")
+        print(f"- Game outcomes: {outcomes}")
         if failures:
             print(f"- Data issues: {len(set(failures))}")
         return 0
     except Exception as exc:  # noqa: BLE001
+        failures = [f"{type(exc).__name__}: {exc}"]
+        if registry is not None and games and not args.include_started and not attempt_recorded:
+            try:
+                registry.record_attempt(
+                    games=games,
+                    model_version=MODEL_VERSION,
+                    line_source=line_source_name,
+                    snapshot_path=None,
+                    captured_at=capture_time,
+                    outcomes={game.game_id: "failed" for game in games},
+                )
+            except Exception as registry_exc:  # noqa: BLE001
+                failures.append(
+                    f"capture registry failure: {type(registry_exc).__name__}: {registry_exc}"
+                )
+        health["failures"] = failures
+        _record_health(health)
         print(f"Shadow run failed: {exc}", file=sys.stderr)
         return 1
 
@@ -250,18 +380,77 @@ def _eligible_games(
     ]
 
 
-def _load_injuries(cache: JsonCache, games: list[Game], screen_date: date) -> dict[str, list]:
+def _game_outcome(statuses: list[str], transient: bool) -> str:
+    if not statuses:
+        return "no_lines"
+    any_projected = LINE_PROJECTED in statuses
+    if transient:
+        return "partial" if any_projected else "failed"
+    return "complete"
+
+
+def _rollup_outcome(outcomes: dict[str, str]) -> str:
+    values = list(outcomes.values())
+    if not values:
+        return "no_lines"
+    if all(value == "complete" for value in values):
+        return "captured"
+    if all(value == "no_lines" for value in values):
+        return "no_lines"
+    if any(value in {"partial", "failed"} for value in values):
+        return "partial" if any(value in {"complete", "partial"} for value in values) else "failed"
+    return "captured"
+
+
+def _collected_too_late(game: Game, prop_lines: list[PropLine], minimum_lead_minutes: float) -> bool:
+    collected_at = max(
+        (line.collected_at for line in prop_lines if line.event_id == game.game_id),
+        default=None,
+    )
+    if collected_at is None:
+        return False
+    return capture_lead_minutes(game.game_time, collected_at) < minimum_lead_minutes
+
+
+def _git_state() -> tuple[str | None, bool]:
+    commit = None
+    dirty = False
+    try:
+        commit_result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        commit = commit_result.stdout.strip() or None
+        status_result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        dirty = bool(status_result.stdout.strip())
+    except Exception:  # noqa: BLE001
+        return None, False
+    return commit, dirty
+
+
+def _load_injuries(cache: JsonCache, games: list[Game], screen_date: date) -> tuple[dict[str, list], dict[str, str]]:
     source = EspnInjurySource(cache)
     teams = sorted({game.home_team for game in games} | {game.away_team for game in games})
     results = {}
+    errors = {}
     for team in teams:
         try:
             injuries = source.fetch_team_injuries(team, screen_date)
-        except Exception:
-            injuries = []
+        except Exception as exc:  # noqa: BLE001
+            errors[team] = f"{type(exc).__name__}: {exc}"
+            continue
         if injuries:
             results[team] = injuries
-    return results
+    return results, errors
 
 
 def _resolve_game_context(
@@ -290,11 +479,14 @@ def _export_shadow_snapshot(
     projections: list,
     game_contexts: dict[tuple[str, str], ShadowGameContext],
     failures: list[str],
-    simulations: int,
+    config: ProjectionConfig,
     line_source: str,
     line_source_diagnostics: dict,
     capture_window: CaptureWindow,
     strict_pregame: bool,
+    code_commit: str | None,
+    code_dirty: bool,
+    injury_errors: dict[str, str],
 ) -> Path:
     history_dir = OUTPUTS_DIR / "history"
     history_dir.mkdir(parents=True, exist_ok=True)
@@ -319,12 +511,16 @@ def _export_shadow_snapshot(
         "mode": "shadow_projection",
         "research_only": True,
         "model_version": MODEL_VERSION,
+        "model_config": asdict(config),
+        "model_config_hash": config_signature(config),
+        "code_commit": code_commit,
+        "code_dirty": code_dirty,
         "snapshot_id": f"shadow-{timestamp}",
         "exported_at": exported_at.isoformat(),
         "screen_date": screen_date.isoformat(),
         "line_source": line_source,
         "line_source_diagnostics": line_source_diagnostics,
-        "simulations": simulations,
+        "simulations": config.simulations,
         "capture_policy": {
             "strict_pregame": strict_pregame,
             "minimum_lead_minutes": capture_window.minimum_lead_minutes,
@@ -338,9 +534,22 @@ def _export_shadow_snapshot(
         "prop_lines": [asdict(line) for line in prop_lines],
         "projections": serialized_projections,
         "failures": failures,
+        "source_health": {
+            "injury_errors": dict(sorted(injury_errors.items())),
+        },
     }
     path.write_text(json.dumps(payload, default=str, indent=2, sort_keys=True))
     return path
+
+
+def _record_health(health: dict) -> None:
+    log_dir = OUTPUTS_DIR / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    history_path = log_dir / "shadow_health.jsonl"
+    latest_path = log_dir / "shadow_health_latest.json"
+    with history_path.open("a") as handle:
+        handle.write(json.dumps(health, sort_keys=True) + "\n")
+    latest_path.write_text(json.dumps(health, indent=2, sort_keys=True))
 
 
 if __name__ == "__main__":

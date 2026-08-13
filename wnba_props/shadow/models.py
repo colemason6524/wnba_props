@@ -44,6 +44,8 @@ class ShadowProjection:
     over_probability: float
     under_probability: float
     push_probability: float
+    conditional_over_probability: float
+    conditional_under_probability: float
     fair_over_odds: Optional[int]
     fair_under_odds: Optional[int]
     over_break_even_probability: Optional[float]

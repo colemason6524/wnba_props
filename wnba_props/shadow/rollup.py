@@ -6,7 +6,7 @@ from statistics import mean
 from typing import Any
 
 from .grading import calibration_buckets
-from .pricing import implied_probability
+from .pricing import implied_probability, is_valid_price
 
 
 EVIDENCE_TARGETS = {
@@ -40,6 +40,7 @@ def build_shadow_rollup(
     primary_rows = _select_primary_rows(primary_candidates)
     primary_metrics = performance_metrics(primary_rows)
     evidence_gate = _evidence_gate(primary_metrics)
+    model_breakdown = _model_breakdown(primary_rows)
     by_slate = _grouped_metrics(primary_rows, "screen_date")
     by_game = _grouped_metrics(primary_rows, "game_id")
     resolution_totals = {
@@ -72,6 +73,7 @@ def build_shadow_rollup(
         "over_probability_calibration": calibration_buckets(primary_rows),
         "by_slate": by_slate,
         "by_game": by_game,
+        "model_breakdown": model_breakdown,
         "evidence_gate": evidence_gate,
     }
 
@@ -88,7 +90,9 @@ def performance_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
         if row.get("percentile_10") is not None and row.get("percentile_90") is not None
     ]
     both_priced = [
-        row for row in rows if row.get("over_odds") is not None and row.get("under_odds") is not None
+        row
+        for row in rows
+        if is_valid_price(row.get("over_odds")) and is_valid_price(row.get("under_odds"))
     ]
     wins = sum(1 for row in selected if row.get("selection_outcome") == "win")
     losses = sum(1 for row in selected if row.get("selection_outcome") == "loss")
@@ -103,6 +107,15 @@ def performance_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "slate_count": len({str(row.get("screen_date", "")) for row in rows}),
         "game_count": len({str(row.get("game_id", "")) for row in rows}),
         "model_versions": sorted({str(row.get("model_version", "")) for row in rows}),
+        "model_identity_count": len(
+            {
+                (
+                    str(row.get("model_version", "")),
+                    str(row.get("model_config_hash", "")),
+                )
+                for row in rows
+            }
+        ),
         "both_side_price_count": len(both_priced),
         "both_side_price_rate": round(len(both_priced) / len(rows), 4) if rows else None,
         "spread_context_count": sum(row.get("team_spread") is not None for row in rows),
@@ -210,6 +223,7 @@ def _select_primary_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for row in rows:
         key = (
             str(row.get("model_version", "")),
+            str(row.get("model_config_hash", "")),
             str(row.get("game_id", "")),
             str(row.get("player_name_norm", "")),
             str(row.get("prop_type", "")),
@@ -246,6 +260,29 @@ def _grouped_metrics(rows: list[dict[str, Any]], field: str) -> list[dict[str, A
     ]
 
 
+def _model_breakdown(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        grouped[
+            (
+                str(row.get("model_version", "")),
+                str(row.get("model_config_hash", "")),
+            )
+        ].append(row)
+    breakdown = []
+    for (version, config_hash), group_rows in sorted(grouped.items()):
+        metrics = performance_metrics(group_rows)
+        breakdown.append(
+            {
+                "model_version": version,
+                "model_config_hash": config_hash,
+                "metrics": metrics,
+                "evidence_gate": _evidence_gate(metrics),
+            }
+        )
+    return breakdown
+
+
 def _evidence_gate(metrics: dict[str, Any]) -> dict[str, Any]:
     checks = {
         "minimum_slates": metrics["slate_count"] >= EVIDENCE_TARGETS["minimum_slates"],
@@ -259,10 +296,18 @@ def _evidence_gate(metrics: dict[str, Any]) -> dict[str, Any]:
             >= EVIDENCE_TARGETS["minimum_both_side_price_rate"]
         ),
     }
+    mixed_models = metrics["model_identity_count"] > 1
+    if mixed_models:
+        status = "MIXED_MODELS"
+    elif all(checks.values()):
+        status = "READY_FOR_REVIEW"
+    else:
+        status = "COLLECTING"
     return {
-        "status": "READY_FOR_REVIEW" if all(checks.values()) else "COLLECTING",
+        "status": status,
         "checks": checks,
         "targets": EVIDENCE_TARGETS,
+        "mixed_models": mixed_models,
     }
 
 

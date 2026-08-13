@@ -1,6 +1,23 @@
 from __future__ import annotations
 
 
+def normalize_odds(odds: object) -> int | None:
+    """Return integer American odds only when they parse to a usable price."""
+    try:
+        value = int(odds) if odds is not None else None
+    except (TypeError, ValueError):
+        return None
+    if value is None or value == 0:
+        return None
+    return value
+
+
+def is_valid_price(odds: object) -> bool:
+    """A side is priced only when its odds parse into a valid implied probability."""
+    normalized = normalize_odds(odds)
+    return normalized is not None and american_to_decimal(normalized) is not None
+
+
 def american_to_decimal(odds: int | None) -> float | None:
     if odds is None or odds == 0:
         return None

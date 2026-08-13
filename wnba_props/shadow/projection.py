@@ -9,7 +9,7 @@ from statistics import mean, median, pstdev
 
 from ..models import PlayerGameLog, PropLine
 from .models import MODEL_VERSION, ShadowProjection
-from .pricing import expected_profit_units, fair_american_odds, implied_probability
+from .pricing import expected_profit_units, fair_american_odds, implied_probability, is_valid_price
 
 
 @dataclass(frozen=True)
@@ -19,6 +19,24 @@ class ProjectionConfig:
     recent_games: int = 10
     recency_half_life_games: float = 6.0
     league_game_total_baseline: float = 164.0
+
+
+def config_signature(config: ProjectionConfig) -> str:
+    """Deterministic fingerprint of a projection configuration.
+
+    Kept separate from MODEL_VERSION so that a configuration change under the
+    same version string can be detected and isolated in evidence rollups.
+    """
+    raw = "|".join(
+        [
+            str(config.simulations),
+            str(config.minimum_games),
+            str(config.recent_games),
+            str(config.recency_half_life_games),
+            str(config.league_game_total_baseline),
+        ]
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
 def project_points_line(
@@ -174,6 +192,8 @@ def project_points_line(
         over_probability=round(over_probability, 4),
         under_probability=round(under_probability, 4),
         push_probability=round(push_probability, 4),
+        conditional_over_probability=round(conditional_over, 4),
+        conditional_under_probability=round(conditional_under, 4),
         fair_over_odds=fair_american_odds(conditional_over),
         fair_under_odds=fair_american_odds(conditional_under),
         over_break_even_probability=_rounded_optional(implied_probability(line.over_odds)),
@@ -240,9 +260,11 @@ def _projection_seed(line: PropLine, screen_date: date) -> int:
 
 
 def _price_status(line: PropLine) -> str:
-    if line.over_odds is not None and line.under_odds is not None:
+    over_valid = is_valid_price(line.over_odds)
+    under_valid = is_valid_price(line.under_odds)
+    if over_valid and under_valid:
         return "BOTH_SIDES_PRICED"
-    if line.over_odds is not None or line.under_odds is not None:
+    if over_valid or under_valid:
         return "ONE_SIDE_PRICED"
     return "NO_PRICE"
 
