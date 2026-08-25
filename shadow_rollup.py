@@ -79,7 +79,7 @@ def _is_final(report: dict[str, Any]) -> bool:
 def _enrich_legacy_report(report: dict[str, Any]) -> dict[str, Any]:
     snapshot_path = Path(str(report.get("source_snapshot", "")))
     if not snapshot_path.is_file():
-        return report
+        return _apply_source_code_state(report)
     snapshot = json.loads(snapshot_path.read_text())
     projections = {
         (
@@ -91,9 +91,13 @@ def _enrich_legacy_report(report: dict[str, Any]) -> dict[str, Any]:
     }
     enriched_rows = []
     snapshot_config_hash = str(snapshot.get("model_config_hash", ""))
+    snapshot_code_commit = snapshot.get("code_commit")
+    snapshot_code_dirty = snapshot.get("code_dirty")
     for original in report.get("graded", []):
         row = dict(original)
         row.setdefault("model_config_hash", snapshot_config_hash)
+        row.setdefault("code_commit", snapshot_code_commit)
+        row.setdefault("code_dirty", snapshot_code_dirty)
         projection = projections.get(
             (
                 str(row.get("game_id", "")),
@@ -119,6 +123,22 @@ def _enrich_legacy_report(report: dict[str, Any]) -> dict[str, Any]:
                 row.get("capture_lead_minutes") is not None
                 and float(row["capture_lead_minutes"]) > 0.0,
             )
+        enriched_rows.append(row)
+    enriched = dict(report)
+    enriched["graded"] = enriched_rows
+    return enriched
+
+
+def _apply_source_code_state(report: dict[str, Any]) -> dict[str, Any]:
+    commit = report.get("source_code_commit")
+    dirty = report.get("source_code_dirty")
+    if commit is None and dirty is None:
+        return report
+    enriched_rows = []
+    for original in report.get("graded", []):
+        row = dict(original)
+        row.setdefault("code_commit", commit)
+        row.setdefault("code_dirty", dirty)
         enriched_rows.append(row)
     enriched = dict(report)
     enriched["graded"] = enriched_rows

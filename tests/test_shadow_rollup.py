@@ -15,6 +15,9 @@ def _row(
     return {
         "projection_id": f"{game_id}-{player}-{lead}",
         "model_version": "model-v1",
+        "model_config_hash": "hash-a",
+        "code_commit": "abc123",
+        "code_dirty": False,
         "screen_date": screen_date,
         "game_id": game_id,
         "player_name_norm": player,
@@ -110,6 +113,125 @@ class ShadowRollupTests(unittest.TestCase):
 
         self.assertEqual("MIXED_MODELS", rollup["evidence_gate"]["status"])
         self.assertEqual(2, len(rollup["model_breakdown"]))
+
+    def test_multiple_code_commits_are_mixed_models(self) -> None:
+        rows = [
+            _row(player=f"player-{index}", lead=30.0, game_id=f"game-{index % 20}")
+            for index in range(100)
+        ]
+        for index, row in enumerate(rows):
+            row["code_commit"] = "commit-a" if index % 2 == 0 else "commit-b"
+
+        rollup = build_shadow_rollup([{"graded": rows}])
+
+        self.assertEqual("MIXED_MODELS", rollup["evidence_gate"]["status"])
+        self.assertEqual(2, len(rollup["model_breakdown"]))
+
+    def test_dirty_rows_stay_diagnostic_not_primary(self) -> None:
+        clean_rows = [
+            _row(
+                player=f"clean-{index}",
+                lead=30.0,
+                game_id=f"clean-game-{index % 7}",
+                screen_date=f"2026-08-{5 + (index % 7):02d}",
+            )
+            for index in range(14)
+        ]
+        dirty_rows = [
+            _row(player=f"dirty-{index}", lead=30.0, game_id="dirty-game")
+            for index in range(3)
+        ]
+        for row in dirty_rows:
+            row["code_dirty"] = True
+
+        rollup = build_shadow_rollup([{"graded": clean_rows + dirty_rows}])
+
+        self.assertEqual(17, rollup["all_resolved_diagnostics"]["projection_count"])
+        self.assertEqual(14, rollup["primary_pregame"]["projection_count"])
+        self.assertEqual(3, rollup["excluded_from_primary"]["reasons"].get("code_dirty", 0))
+        self.assertEqual("COLLECTING", rollup["evidence_gate"]["status"])
+
+    def test_missing_code_state_is_excluded_from_primary(self) -> None:
+        rows = [
+            _row(
+                player=f"player-{index}",
+                lead=30.0,
+                game_id=f"game-{index % 20}",
+                screen_date=f"2026-08-{5 + (index % 7):02d}",
+            )
+            for index in range(100)
+        ]
+        for row in rows:
+            row.pop("code_commit", None)
+            row.pop("code_dirty", None)
+
+        rollup = build_shadow_rollup([{"graded": rows}])
+
+        self.assertEqual(0, rollup["primary_pregame"]["projection_count"])
+        self.assertEqual(
+            100, rollup["excluded_from_primary"]["reasons"].get("code_commit_missing", 0)
+        )
+        self.assertEqual("COLLECTING", rollup["evidence_gate"]["status"])
+
+    def test_missing_commit_is_excluded_as_code_commit_missing(self) -> None:
+        rows = [
+            _row(
+                player=f"player-{index}",
+                lead=30.0,
+                game_id=f"game-{index % 20}",
+                screen_date=f"2026-08-{5 + (index % 7):02d}",
+            )
+            for index in range(100)
+        ]
+        for row in rows:
+            row.pop("code_commit", None)
+
+        rollup = build_shadow_rollup([{"graded": rows}])
+
+        self.assertEqual(0, rollup["primary_pregame"]["projection_count"])
+        self.assertEqual(
+            100, rollup["excluded_from_primary"]["reasons"].get("code_commit_missing", 0)
+        )
+        self.assertEqual("COLLECTING", rollup["evidence_gate"]["status"])
+
+    def test_commit_without_dirty_flag_is_code_state_missing(self) -> None:
+        rows = [
+            _row(
+                player=f"player-{index}",
+                lead=30.0,
+                game_id=f"game-{index % 20}",
+                screen_date=f"2026-08-{5 + (index % 7):02d}",
+            )
+            for index in range(100)
+        ]
+        for row in rows:
+            row.pop("code_dirty", None)
+
+        rollup = build_shadow_rollup([{"graded": rows}])
+
+        self.assertEqual(0, rollup["primary_pregame"]["projection_count"])
+        self.assertEqual(
+            100, rollup["excluded_from_primary"]["reasons"].get("code_state_missing", 0)
+        )
+        self.assertEqual("COLLECTING", rollup["evidence_gate"]["status"])
+
+    def test_dirty_rows_cannot_satisfy_gate(self) -> None:
+        rows = [
+            _row(
+                player=f"player-{index}",
+                lead=30.0,
+                game_id=f"game-{index % 20}",
+                screen_date=f"2026-08-{5 + (index % 7):02d}",
+            )
+            for index in range(100)
+        ]
+        for row in rows:
+            row["code_dirty"] = True
+
+        rollup = build_shadow_rollup([{"graded": rows}])
+
+        self.assertEqual(0, rollup["primary_pregame"]["projection_count"])
+        self.assertEqual("COLLECTING", rollup["evidence_gate"]["status"])
 
 
 if __name__ == "__main__":

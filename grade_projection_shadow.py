@@ -175,6 +175,8 @@ def _grade_snapshots(
             "source_exported_at": snapshot.get("exported_at"),
             "source_capture_policy": snapshot.get("capture_policy"),
             "source_model_config_hash": snapshot.get("model_config_hash"),
+            "source_code_commit": snapshot.get("code_commit"),
+            "source_code_dirty": snapshot.get("code_dirty"),
             "screen_date": screen_date.isoformat(),
             "model_version": snapshot.get("model_version"),
             "boxscore_fetch_errors": [

@@ -27,6 +27,10 @@ def build_shadow_rollup(
     primary_candidates = []
     exclusions: Counter[str] = Counter()
     for row in all_rows:
+        audit_reason = _audit_status(row)
+        if audit_reason is not None:
+            exclusions[audit_reason] += 1
+            continue
         lead = _optional_float(row.get("capture_lead_minutes"))
         if lead is None:
             exclusions["capture_lead_missing"] += 1
@@ -112,6 +116,7 @@ def performance_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
                 (
                     str(row.get("model_version", "")),
                     str(row.get("model_config_hash", "")),
+                    str(row.get("code_commit", "")),
                 )
                 for row in rows
             }
@@ -224,6 +229,7 @@ def _select_primary_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         key = (
             str(row.get("model_version", "")),
             str(row.get("model_config_hash", "")),
+            str(row.get("code_commit", "")),
             str(row.get("game_id", "")),
             str(row.get("player_name_norm", "")),
             str(row.get("prop_type", "")),
@@ -261,21 +267,23 @@ def _grouped_metrics(rows: list[dict[str, Any]], field: str) -> list[dict[str, A
 
 
 def _model_breakdown(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         grouped[
             (
                 str(row.get("model_version", "")),
                 str(row.get("model_config_hash", "")),
+                str(row.get("code_commit", "")),
             )
         ].append(row)
     breakdown = []
-    for (version, config_hash), group_rows in sorted(grouped.items()):
+    for (version, config_hash, code_commit), group_rows in sorted(grouped.items()):
         metrics = performance_metrics(group_rows)
         breakdown.append(
             {
                 "model_version": version,
                 "model_config_hash": config_hash,
+                "code_commit": code_commit,
                 "metrics": metrics,
                 "evidence_gate": _evidence_gate(metrics),
             }
@@ -328,6 +336,18 @@ def _optional_float(value: object) -> float | None:
         return float(value) if value is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def _audit_status(row: dict[str, Any]) -> str | None:
+    dirty = row.get("code_dirty")
+    commit = row.get("code_commit")
+    if dirty is True:
+        return "code_dirty"
+    if commit is None or not str(commit).strip():
+        return "code_commit_missing"
+    if dirty is None:
+        return "code_state_missing"
+    return None
 
 
 def _optional_int(value: object) -> int | None:
