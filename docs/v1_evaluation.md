@@ -39,7 +39,7 @@ Excluded from primary evidence: 83 `code_dirty` rows (audit taint Aug 18–20) +
 - 10th–90th interval coverage: `71.29%` (nominal 80%) — uncertainty too narrow
 - Minutes MAE: `4.4475`; points MAE: `4.8462`
 - Selections: `162` (OVER 92, UNDER 70)
-- Record: `88-74` (121 wins / 110 losses incl. pushes=0); hit rate `52.4%`
+- Record: `88-74`; hit rate `54.32%`
 - Flat-stake units: `+3.2494`
 - Flat-stake ROI: `+2.01%`
 
@@ -118,7 +118,7 @@ Slate variance is large (ROI from -0.51 to +0.35); the aggregate +2.01% is withi
 ## Record-keeping
 
 - The `+2.01%` ROI is documented here as a minor positive but explicitly not treated as evidence of edge.
-- All artifacts archived with SHA-256 manifest (`manifest.json`, 165 files).
+- All artifacts archived with SHA-256 manifest (`manifest.json`, 164 files, manifest itself excluded and checksummed separately as `manifest.sha256`).
 - No artifacts were deleted or rewritten.
 - v1 selections were never sent to Discord and production (`WNBA Props Daily`) was never modified.
 - v2 will use a new model version, new config hash, and a fresh evidence gate; v1 data is development evidence only.
