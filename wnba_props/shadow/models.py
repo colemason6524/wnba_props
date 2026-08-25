@@ -4,8 +4,10 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import List, Optional
 
+from .calibration import ARTIFACT_SCHEMA_VERSION
 
-MODEL_VERSION = "wnba-points-shadow-v1"
+
+MODEL_VERSION = "wnba-points-shadow-v2"
 
 
 @dataclass
@@ -56,3 +58,11 @@ class ShadowProjection:
     price_status: str
     decision: str = "RESEARCH_ONLY"
     flags: List[str] = field(default_factory=list)
+    raw_conditional_over_probability: Optional[float] = None
+    raw_conditional_under_probability: Optional[float] = None
+    residual_model_id: str = ""
+    residual_schema_version: int = ARTIFACT_SCHEMA_VERSION
+    calibration_lambda: Optional[float] = None
+    calibration_artifact_sha256: str = ""
+    availability_status: str = ""
+    injury_source_available: bool = True

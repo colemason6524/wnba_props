@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 
+from shadow_rollup import _filter_reports_by_model
 from wnba_props.shadow.rollup import build_shadow_rollup
 
 
@@ -232,6 +233,42 @@ class ShadowRollupTests(unittest.TestCase):
 
         self.assertEqual(0, rollup["primary_pregame"]["projection_count"])
         self.assertEqual("COLLECTING", rollup["evidence_gate"]["status"])
+
+    def test_model_version_filter_isolates_v2_from_archived_v1(self) -> None:
+        def _versioned(player: str, version: str) -> dict:
+            row = _row(player=player, lead=30.0)
+            row["model_version"] = version
+            return row
+
+        report = {
+            "graded": [_versioned(f"v1-{i}", "wnba-points-shadow-v1") for i in range(5)]
+            + [_versioned(f"v2-{i}", "wnba-points-shadow-v2") for i in range(4)]
+        }
+
+        filtered, dropped = _filter_reports_by_model(
+            [report], "wnba-points-shadow-v2"
+        )
+
+        self.assertEqual(1, len(filtered))
+        self.assertEqual(4, len(filtered[0]["graded"]))
+        self.assertEqual(5, dropped)
+        self.assertTrue(
+            all(
+                row["model_version"] == "wnba-points-shadow-v2"
+                for row in filtered[0]["graded"]
+            )
+        )
+
+    def test_model_version_filter_drops_reports_with_no_matching_rows(self) -> None:
+        report = {"graded": [_row(player="only-v1", lead=30.0)]}
+        report["graded"][0]["model_version"] = "wnba-points-shadow-v1"
+
+        filtered, dropped = _filter_reports_by_model(
+            [report], "wnba-points-shadow-v2"
+        )
+
+        self.assertEqual([], filtered)
+        self.assertEqual(1, dropped)
 
 
 if __name__ == "__main__":

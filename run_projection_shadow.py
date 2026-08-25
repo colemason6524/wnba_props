@@ -16,6 +16,7 @@ from wnba_props.cache import JsonCache
 from wnba_props.config import CACHE_DIR, OUTPUTS_DIR, ROOT, load_settings
 from wnba_props.models import Game, PropLine
 from wnba_props.shadow import MODEL_VERSION, ProjectionConfig, project_points_line
+from wnba_props.shadow.calibration import ResidualArtifact, load_calibration_artifact
 from wnba_props.shadow.collection import (
     CaptureRegistry,
     CaptureWindow,
@@ -51,6 +52,14 @@ def main() -> int:
     settings.supported_prop_types = ["PTS"]
 
     config = ProjectionConfig(simulations=args.simulations)
+    try:
+        artifact_path = Path(args.calibration_artifact)
+        if not artifact_path.is_absolute():
+            artifact_path = ROOT / artifact_path
+        residuals: ResidualArtifact = load_calibration_artifact(artifact_path)
+    except ValueError as exc:
+        print(f"Shadow run failed: {exc}", file=sys.stderr)
+        return 1
     code_commit, code_dirty = _git_state()
 
     shadow_cache_root = CACHE_DIR / "shadow"
@@ -78,6 +87,8 @@ def main() -> int:
         "screen_date": settings.screen_date.isoformat(),
         "model_version": MODEL_VERSION,
         "model_config_hash": config_signature(config),
+        "residual_model_id": residuals.residual_model_id,
+        "calibration_artifact_sha256": residuals.sha256,
         "line_source": line_source_name,
         "code_commit": code_commit,
         "code_dirty": code_dirty,
@@ -221,6 +232,8 @@ def main() -> int:
                     game_total=game_context.total if game_context else None,
                     player_status=statuses.get((line.team, player_key), ""),
                     config=config,
+                    residuals=residuals,
+                    injury_source_available=line.team not in injury_errors,
                 )
                 if projection is None:
                     failures.append(f"{line.player_name_raw}: insufficient eligible history or unavailable")
@@ -256,6 +269,7 @@ def main() -> int:
             code_commit=code_commit,
             code_dirty=code_dirty,
             injury_errors=dict(injury_errors),
+            residuals=residuals,
         )
 
         outcomes = {
@@ -335,6 +349,15 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the isolated WNBA PTS projection shadow model.")
     parser.add_argument("--screen-date", help="Slate date in YYYY-MM-DD format; defaults to today.")
     parser.add_argument("--simulations", type=int, default=10_000)
+    parser.add_argument(
+        "--calibration-artifact",
+        default="config/shadow_v2_calibration.json",
+        help=(
+            "Path to the frozen residual calibration artifact (absolute, or "
+            "relative to the project root). The run fails fast when it is "
+            "missing or invalid."
+        ),
+    )
     parser.add_argument("--capture-min-lead-minutes", type=float, default=20.0)
     parser.add_argument("--capture-max-lead-minutes", type=float, default=90.0)
     parser.add_argument(
@@ -487,6 +510,7 @@ def _export_shadow_snapshot(
     code_commit: str | None,
     code_dirty: bool,
     injury_errors: dict[str, str],
+    residuals: ResidualArtifact,
 ) -> Path:
     history_dir = OUTPUTS_DIR / "history"
     history_dir.mkdir(parents=True, exist_ok=True)
@@ -513,6 +537,16 @@ def _export_shadow_snapshot(
         "model_version": MODEL_VERSION,
         "model_config": asdict(config),
         "model_config_hash": config_signature(config),
+        "residual_model": {
+            "residual_model_id": residuals.residual_model_id,
+            "schema_version": residuals.schema_version,
+            "n_rows": residuals.n_rows,
+            "sha256": residuals.sha256,
+            "source_model_version": residuals.source_model_version,
+            "source_config_hash": residuals.source_config_hash,
+            "source_commit": residuals.source_commit,
+            "projection_ids_sha256": residuals.projection_ids_sha256,
+        },
         "code_commit": code_commit,
         "code_dirty": code_dirty,
         "snapshot_id": f"shadow-{timestamp}",

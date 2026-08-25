@@ -90,6 +90,9 @@ def summarize_grades(
     unpriced = [row for row in selected if not row["price_evaluable"]]
     passed = [row for row in graded if row["model_side"] not in {"OVER", "UNDER"}]
     brier_rows = [row for row in graded if row["over_brier_score"] is not None]
+    raw_brier_rows = [
+        row for row in graded if row.get("over_brier_score_raw") is not None
+    ]
 
     wins = sum(1 for row in selected if row["selection_outcome"] == "win")
     losses = sum(1 for row in selected if row["selection_outcome"] == "loss")
@@ -112,6 +115,9 @@ def summarize_grades(
         ),
         "over_brier_score": _rounded_mean(
             [float(row["over_brier_score"]) for row in brier_rows]
+        ),
+        "over_brier_score_raw": _rounded_mean(
+            [float(row["over_brier_score_raw"]) for row in raw_brier_rows]
         ),
         "over_brier_score_unconditional": _rounded_mean(
             [float(row["over_brier_score_unconditional"]) for row in brier_rows]
@@ -186,6 +192,11 @@ def render_grading_report(report: dict[str, Any]) -> str:
                 f"Points RMSE: {_display(summary['root_mean_squared_error_points'])}",
                 f"Minutes MAE: {_display(summary['mean_absolute_error_minutes'])}",
                 f"Over-probability Brier: {_display(summary['over_brier_score'])}",
+                *(
+                    [f"Raw over-probability Brier: {_display(summary['over_brier_score_raw'])}"]
+                    if summary.get("over_brier_score_raw") is not None
+                    else []
+                ),
                 (
                     "Research selections: "
                     f"{summary['selected_count']} "
@@ -226,6 +237,10 @@ def _grade_projection(
     conditional_over = _conditional_over_probability(projection)
     actual_over = None if actual_outcome == "push" else actual_outcome == "over"
     brier = None if actual_over is None else (conditional_over - float(actual_over)) ** 2
+    raw_conditional_over = _raw_conditional_over_probability(projection, fallback=conditional_over)
+    brier_raw = (
+        None if actual_over is None else (raw_conditional_over - float(actual_over)) ** 2
+    )
     brier_unconditional = None if actual_over is None else (over_probability - float(actual_over)) ** 2
     capture_lead = _capture_lead(projection)
 
@@ -264,9 +279,14 @@ def _grade_projection(
         "projection_error_minutes": round(minutes_error, 4),
         "absolute_error_minutes": round(abs(minutes_error), 4),
         "over_brier_score": round(brier, 6) if brier is not None else None,
+        "over_brier_score_raw": round(brier_raw, 6) if brier_raw is not None else None,
         "over_brier_score_unconditional": (
             round(brier_unconditional, 6) if brier_unconditional is not None else None
         ),
+        "residual_model_id": projection.get("residual_model_id"),
+        "calibration_lambda": projection.get("calibration_lambda"),
+        "availability_status": projection.get("availability_status"),
+        "injury_source_available": projection.get("injury_source_available"),
         "selection_outcome": selection_outcome,
         "selected_odds": selected_odds,
         "price_evaluable": selected_odds is not None,
@@ -336,6 +356,18 @@ def _conditional_over_probability(projection: dict[str, Any]) -> float:
     if non_push > 0.0:
         return over / non_push
     return 0.5
+
+
+def _raw_conditional_over_probability(
+    projection: dict[str, Any], *, fallback: float
+) -> float:
+    raw = projection.get("raw_conditional_over_probability")
+    if raw is None:
+        return fallback
+    try:
+        return min(1.0, max(0.0, float(raw)))
+    except (TypeError, ValueError):
+        return fallback
 
 
 def _capture_lead(projection: dict[str, Any]) -> float | None:

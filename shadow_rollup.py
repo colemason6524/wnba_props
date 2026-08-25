@@ -20,6 +20,14 @@ def main() -> int:
             print("No terminal shadow grading reports are available.")
             return 0
         enriched = [_enrich_legacy_report(report) for report in reports]
+        if args.model_version:
+            enriched, dropped = _filter_reports_by_model(enriched, args.model_version)
+            if not enriched:
+                print(
+                    "No terminal shadow grading reports match model version "
+                    f"{args.model_version!r}."
+                )
+                return 0
         rollup = build_shadow_rollup(
             enriched,
             minimum_lead_minutes=args.capture_min_lead_minutes,
@@ -42,7 +50,36 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--capture-min-lead-minutes", type=float, default=20.0)
     parser.add_argument("--capture-max-lead-minutes", type=float, default=90.0)
+    parser.add_argument(
+        "--model-version",
+        help=(
+            "Restrict primary evidence to one model version (e.g. "
+            "wnba-points-shadow-v2) so archived reports from other versions "
+            "cannot force MIXED_MODELS. Defaults to all versions."
+        ),
+    )
     return parser.parse_args()
+
+
+def _filter_reports_by_model(
+    reports: list[dict[str, Any]],
+    model_version: str,
+) -> tuple[list[dict[str, Any]], int]:
+    """Keep only graded rows whose model_version matches; drop empty reports."""
+    filtered = []
+    dropped_rows = 0
+    for report in reports:
+        rows = [
+            row
+            for row in report.get("graded", [])
+            if str(row.get("model_version", "")) == model_version
+        ]
+        dropped_rows += len(report.get("graded", [])) - len(rows)
+        if rows:
+            narrowed = dict(report)
+            narrowed["graded"] = rows
+            filtered.append(narrowed)
+    return filtered, dropped_rows
 
 
 def _load_latest_final_reports(output_dir: Path) -> list[dict[str, Any]]:

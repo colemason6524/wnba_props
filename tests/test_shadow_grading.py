@@ -214,6 +214,57 @@ class ShadowGradingTests(unittest.TestCase):
         self.assertAlmostEqual((conditional_over - 1.0) ** 2, grade["over_brier_score"], places=6)
         self.assertAlmostEqual((0.50 - 1.0) ** 2, grade["over_brier_score_unconditional"], places=6)
 
+    def test_raw_and_calibrated_brier_are_both_computed(self) -> None:
+        projection = _projection(player="Calib Player", line=15.0)
+        # calibrated conditional over (stored primary) vs raw pre-shrinkage value
+        projection["conditional_over_probability"] = 0.60
+        projection["conditional_under_probability"] = 0.40
+        projection["raw_conditional_over_probability"] = 0.70
+        projection["availability_status"] = "questionable"
+        projection["injury_source_available"] = False
+        projection["residual_model_id"] = "v1-joint-residual-r1"
+        report = grade_shadow_projections(
+            [projection],
+            game_statuses={
+                "final-game": ShadowGameStatus("final-game", "post", True, "Final")
+            },
+            boxscores={
+                "final-game": {
+                    ("calib player", "NY"): _stat_line("Calib Player", minutes=30.0, points=20)
+                }
+            },
+        )
+
+        grade = report["graded"][0]
+        self.assertAlmostEqual((0.60 - 1.0) ** 2, grade["over_brier_score"], places=6)
+        self.assertAlmostEqual((0.70 - 1.0) ** 2, grade["over_brier_score_raw"], places=6)
+        self.assertEqual("questionable", grade["availability_status"])
+        self.assertFalse(grade["injury_source_available"])
+        self.assertEqual("v1-joint-residual-r1", grade["residual_model_id"])
+        self.assertAlmostEqual((0.70 - 1.0) ** 2, report["summary"]["over_brier_score_raw"], places=6)
+
+    def test_v1_rows_without_raw_probability_stay_backward_compatible(self) -> None:
+        projection = _projection(player="Legacy Player", line=15.0)
+        projection["over_probability"] = 0.60
+        projection["under_probability"] = 0.40
+        projection["conditional_over_probability"] = 0.60
+        report = grade_shadow_projections(
+            [projection],
+            game_statuses={
+                "final-game": ShadowGameStatus("final-game", "post", True, "Final")
+            },
+            boxscores={
+                "final-game": {
+                    ("legacy player", "NY"): _stat_line("Legacy Player", minutes=30.0, points=20)
+                }
+            },
+        )
+
+        grade = report["graded"][0]
+        # without a stored raw value, raw falls back to the conditional probability
+        self.assertAlmostEqual(grade["over_brier_score_raw"], grade["over_brier_score"], places=6)
+        self.assertAlmostEqual(0.16, report["summary"]["over_brier_score_unconditional"], places=6)
+
     def test_final_pending_dnp_and_missing_player_are_kept_distinct(self) -> None:
         projections = [
             _projection(player="Winner"),

@@ -3,11 +3,12 @@ from __future__ import annotations
 import hashlib
 import math
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from datetime import date, datetime, timezone
 from statistics import mean, median, pstdev
 
 from ..models import PlayerGameLog, PropLine
+from .calibration import ResidualArtifact
 from .models import MODEL_VERSION, ShadowProjection
 from .pricing import expected_profit_units, fair_american_odds, implied_probability, is_valid_price
 
@@ -19,23 +20,22 @@ class ProjectionConfig:
     recent_games: int = 10
     recency_half_life_games: float = 6.0
     league_game_total_baseline: float = 164.0
+    calibration_lambda: float | None = None
 
 
 def config_signature(config: ProjectionConfig) -> str:
-    """Deterministic fingerprint of a projection configuration.
+    """Deterministic fingerprint over every config field.
 
-    Kept separate from MODEL_VERSION so that a configuration change under the
-    same version string can be detected and isolated in evidence rollups.
+    Derived from the dataclass definition so a newly added modeling input can
+    never silently escape the identity. Kept separate from MODEL_VERSION so a
+    configuration change under the same version string remains detectable in
+    evidence rollups.
     """
-    raw = "|".join(
-        [
-            str(config.simulations),
-            str(config.minimum_games),
-            str(config.recent_games),
-            str(config.recency_half_life_games),
-            str(config.league_game_total_baseline),
-        ]
-    )
+    parts = []
+    for item in sorted(fields(config), key=lambda f: f.name):
+        value = getattr(config, item.name)
+        parts.append(f"{item.name}={value!r}")
+    raw = "|".join(parts)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
@@ -49,8 +49,12 @@ def project_points_line(
     game_total: float | None = None,
     player_status: str = "",
     config: ProjectionConfig | None = None,
+    residuals: ResidualArtifact | None = None,
+    injury_source_available: bool = True,
 ) -> ShadowProjection | None:
     config = config or ProjectionConfig()
+    if residuals is None:
+        raise ValueError("v2 requires a frozen calibration artifact")
     if line.prop_type != "PTS":
         return None
 
@@ -66,8 +70,8 @@ def project_points_line(
     if len(eligible_logs) < config.minimum_games:
         return None
 
-    status = player_status.strip().lower()
-    if status in {"out", "injured reserve", "suspended"}:
+    status = _normalize_availability(player_status)
+    if status.excluded:
         return None
 
     recent_logs = eligible_logs[: config.recent_games]
@@ -91,7 +95,7 @@ def project_points_line(
     recent_minutes = [log.minutes for log in recent_logs]
     observed_minutes_sd = pstdev(recent_minutes) if len(recent_minutes) >= 2 else 3.5
     minutes_sd = _clamp((0.70 * observed_minutes_sd) + (0.30 * 3.5), 2.0, 6.0)
-    if status in {"day-to-day", "questionable", "doubtful", "probable", "game-time decision"}:
+    if status.uncertain:
         minutes_sd = min(7.0, minutes_sd + 1.0)
         flags.append("AVAILABILITY_UNCERTAIN")
     projected_minutes = _clamp(projected_minutes, 0.0, 40.0)
@@ -115,40 +119,39 @@ def project_points_line(
     )
     projected_points_per_minute *= environment_factor
 
-    rate_observations = [
-        log.points / log.minutes
-        for log in recent_logs
-        if log.minutes >= 10.0
-    ]
-    observed_rate_sd = pstdev(rate_observations) if len(rate_observations) >= 2 else 0.15
-    points_rate_sd = _clamp((0.75 * observed_rate_sd) + (0.25 * 0.15), 0.08, 0.35)
-
-    seed = _projection_seed(line, screen_date)
+    seed = _projection_seed(line, screen_date, config, residuals)
     simulated_points = _simulate_points(
         seed=seed,
         simulations=config.simulations,
         projected_minutes=projected_minutes,
         minutes_sd=minutes_sd,
         projected_points_per_minute=projected_points_per_minute,
-        points_rate_sd=points_rate_sd,
+        pairs=residuals.pairs,
     )
     wins_over = sum(1 for value in simulated_points if value > line.line)
     wins_under = sum(1 for value in simulated_points if value < line.line)
     pushes = len(simulated_points) - wins_over - wins_under
-    over_probability = wins_over / len(simulated_points)
-    under_probability = wins_under / len(simulated_points)
     push_probability = pushes / len(simulated_points)
 
-    non_push_probability = over_probability + under_probability
-    conditional_over = over_probability / non_push_probability if non_push_probability else 0.5
-    conditional_under = under_probability / non_push_probability if non_push_probability else 0.5
+    non_push_probability = wins_over + wins_under
+    raw_conditional_over = (
+        wins_over / non_push_probability if non_push_probability else 0.5
+    )
+    conditional_over = raw_conditional_over
+    if config.calibration_lambda is not None:
+        lam = _clamp(config.calibration_lambda, 0.0, 1.0)
+        conditional_over = _clamp(0.5 + lam * (raw_conditional_over - 0.5), 0.0, 1.0)
+    conditional_under = 1.0 - conditional_over
+
+    stay_probability = 1.0 - push_probability
+    over_probability = stay_probability * conditional_over
+    under_probability = stay_probability * conditional_under
+
     over_ev = expected_profit_units(over_probability, under_probability, line.over_odds)
     under_ev = expected_profit_units(under_probability, over_probability, line.under_odds)
 
     price_status = _price_status(line)
     model_side = _model_side(
-        over_probability=conditional_over,
-        under_probability=conditional_under,
         over_expected_value=over_ev,
         under_expected_value=under_ev,
         price_status=price_status,
@@ -203,6 +206,42 @@ def project_points_line(
         model_side=model_side,
         price_status=price_status,
         flags=flags,
+        raw_conditional_over_probability=round(raw_conditional_over, 4),
+        raw_conditional_under_probability=round(1.0 - raw_conditional_over, 4),
+        residual_model_id=residuals.residual_model_id,
+        residual_schema_version=residuals.schema_version,
+        calibration_lambda=(
+            None if config.calibration_lambda is None else round(float(config.calibration_lambda), 4)
+        ),
+        calibration_artifact_sha256=residuals.sha256,
+        availability_status=status.normalized,
+        injury_source_available=injury_source_available,
+    )
+
+
+@dataclass(frozen=True)
+class _AvailabilityStatus:
+    normalized: str
+    excluded: bool
+    uncertain: bool
+
+
+_EXCLUDED_STATUSES = {"out", "injured reserve", "suspended"}
+_UNCERTAIN_STATUSES = {
+    "day-to-day",
+    "questionable",
+    "doubtful",
+    "probable",
+    "game-time decision",
+}
+
+
+def _normalize_availability(status: str) -> _AvailabilityStatus:
+    normalized = status.strip().lower()
+    return _AvailabilityStatus(
+        normalized=normalized,
+        excluded=normalized in _EXCLUDED_STATUSES,
+        uncertain=normalized in _UNCERTAIN_STATUSES,
     )
 
 
@@ -232,23 +271,34 @@ def _simulate_points(
     projected_minutes: float,
     minutes_sd: float,
     projected_points_per_minute: float,
-    points_rate_sd: float,
+    pairs: tuple[tuple[float, float], ...],
 ) -> list[int]:
     if simulations <= 0:
         raise ValueError("simulations must be positive")
+    if not pairs:
+        raise ValueError("residual pairs must not be empty")
     rng = random.Random(seed)
+    pair_count = len(pairs)
     results: list[int] = []
     for _ in range(simulations):
-        minutes = _clamp(rng.gauss(projected_minutes, minutes_sd), 0.0, 40.0)
-        points_rate = max(0.0, rng.gauss(projected_points_per_minute, points_rate_sd))
+        minutes_z, rate_error = pairs[rng.randrange(pair_count)]
+        minutes = max(0.0, projected_minutes + minutes_sd * minutes_z)
+        points_rate = max(0.0, projected_points_per_minute + rate_error)
         results.append(max(0, int(round(minutes * points_rate))))
     return results
 
 
-def _projection_seed(line: PropLine, screen_date: date) -> int:
+def _projection_seed(
+    line: PropLine,
+    screen_date: date,
+    config: ProjectionConfig,
+    residuals: ResidualArtifact,
+) -> int:
     raw = "|".join(
         [
             MODEL_VERSION,
+            config_signature(config),
+            residuals.sha256,
             screen_date.isoformat(),
             line.event_id,
             line.player_name_norm,
@@ -271,24 +321,20 @@ def _price_status(line: PropLine) -> str:
 
 def _model_side(
     *,
-    over_probability: float,
-    under_probability: float,
     over_expected_value: float | None,
     under_expected_value: float | None,
     price_status: str,
 ) -> str:
-    if price_status == "BOTH_SIDES_PRICED":
-        candidates = [
-            (over_expected_value if over_expected_value is not None else float("-inf"), "OVER"),
-            (under_expected_value if under_expected_value is not None else float("-inf"), "UNDER"),
-        ]
-        best_ev, best_side = max(candidates)
-        return best_side if best_ev > 0.0 else "PASS"
-    if over_probability >= 0.55:
-        return "OVER"
-    if under_probability >= 0.55:
-        return "UNDER"
-    return "PASS"
+    if price_status != "BOTH_SIDES_PRICED":
+        return "PASS"
+    over_ev = over_expected_value if over_expected_value is not None else float("-inf")
+    under_ev = under_expected_value if under_expected_value is not None else float("-inf")
+    best = max(over_ev, under_ev)
+    if best <= 0.0:
+        return "PASS"
+    if over_ev == under_ev:
+        return "PASS"
+    return "OVER" if over_ev > under_ev else "UNDER"
 
 
 def _percentile(sorted_values: list[int], probability: float) -> int:
