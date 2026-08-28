@@ -872,4 +872,4 @@ def _playoff_context_flags(
 
 
 def _is_playoff_window(screen_date: date) -> bool:
-    return screen_date.month in {4, 5, 6}
+    return screen_date.month in {9, 10}
