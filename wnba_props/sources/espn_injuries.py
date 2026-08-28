@@ -5,7 +5,7 @@ from datetime import date
 from ..cache import JsonCache
 from ..config import TEAM_ABBR_TO_ESPN_ID
 from ..models import TeamInjury
-from ..utils import fetch_json, normalize_name
+from ..utils import fetch_espn_json, normalize_name
 
 
 class EspnInjurySource:
@@ -24,17 +24,17 @@ class EspnInjurySource:
         if cached:
             return [TeamInjury(**item) for item in cached]
 
-        payload = fetch_json(self.INJURIES_URL.format(team_id=team_id))
+        payload = fetch_espn_json(self.INJURIES_URL.format(team_id=team_id))
         injuries: list[TeamInjury] = []
         for item in payload.get("items", []):
             ref = item.get("$ref")
             if not ref:
                 continue
-            injury_payload = fetch_json(ref)
+            injury_payload = fetch_espn_json(ref)
             athlete_ref = injury_payload.get("athlete", {}).get("$ref")
             if not athlete_ref:
                 continue
-            athlete_payload = fetch_json(athlete_ref)
+            athlete_payload = fetch_espn_json(athlete_ref)
             player_name = athlete_payload.get("displayName", "").strip()
             if not player_name:
                 continue

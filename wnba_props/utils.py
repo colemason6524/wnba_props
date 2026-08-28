@@ -16,6 +16,16 @@ DEFAULT_HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
 }
 
+ESPN_API_HEADERS = {
+    "User-Agent": "curl/8.7.1",
+    "Accept": "application/json",
+}
+
+ESPN_API_FALLBACK_HEADERS = {
+    "User-Agent": "Python-urllib/3",
+    "Accept": "application/json",
+}
+
 
 def fetch_text(url: str, headers: dict[str, str] | None = None, timeout: int = 30) -> str:
     request_headers = DEFAULT_HEADERS.copy()
@@ -33,6 +43,16 @@ def fetch_text(url: str, headers: dict[str, str] | None = None, timeout: int = 3
 
 def fetch_json(url: str, headers: dict[str, str] | None = None, timeout: int = 30) -> Any:
     return json.loads(fetch_text(url, headers=headers, timeout=timeout))
+
+
+def fetch_espn_json(url: str, timeout: int = 30) -> Any:
+    """Fetch ESPN JSON without the browser user-agent rejected by its API edge."""
+    try:
+        return fetch_json(url, headers=ESPN_API_HEADERS, timeout=timeout)
+    except RuntimeError as exc:
+        if "HTTP 403" not in str(exc):
+            raise
+        return fetch_json(url, headers=ESPN_API_FALLBACK_HEADERS, timeout=timeout)
 
 
 def ensure_dir(path: Path) -> None:
