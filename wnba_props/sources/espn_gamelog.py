@@ -8,7 +8,7 @@ from html.parser import HTMLParser
 from ..cache import JsonCache
 from ..config import TEAM_ABBR_TO_ESPN_ID
 from ..models import PlayerGameLog
-from ..utils import fetch_json, fetch_text, normalize_name, safe_int
+from ..utils import fetch_espn_json, fetch_text, normalize_name, safe_int
 
 
 class _RosterParser(HTMLParser):
@@ -138,7 +138,7 @@ class EspnGameLogSource:
         roster_cache_key = f"espn_roster_{team_id}"
         roster = self.cache.get(roster_cache_key)
         if roster is None:
-            roster = fetch_json(self.ROSTER_URL.format(team_id=team_id))
+            roster = fetch_espn_json(self.ROSTER_URL.format(team_id=team_id))
             self.cache.set(roster_cache_key, roster)
 
         for athlete in roster.get("athletes", []):

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from ..cache import JsonCache
 from ..config import ESPN_TO_TEAM_ABBR
-from ..utils import fetch_json, normalize_name, safe_int
+from ..utils import fetch_espn_json, normalize_name, safe_int
 
 
 @dataclass
@@ -34,7 +34,7 @@ class EspnBoxscoreSource:
                 for item in cached
             }
 
-        payload = fetch_json(self.SUMMARY_URL.format(event_id=event_id))
+        payload = fetch_espn_json(self.SUMMARY_URL.format(event_id=event_id))
         parsed = self._parse_boxscore(payload)
         self.cache.set(cache_key, [stat_line.__dict__ for stat_line in parsed.values()])
         return parsed

@@ -4,7 +4,7 @@ from datetime import date
 
 from ..config import ESPN_TO_TEAM_ABBR
 from ..models import Game
-from ..utils import parse_iso_datetime, fetch_json
+from ..utils import fetch_espn_json, parse_iso_datetime
 
 
 class EspnSlateSource:
@@ -12,7 +12,7 @@ class EspnSlateSource:
 
     def fetch_games(self, screen_date: date) -> list[Game]:
         url = self.SCOREBOARD_URL.format(date_str=screen_date.strftime("%Y%m%d"))
-        data = fetch_json(url)
+        data = fetch_espn_json(url)
         games: list[Game] = []
         for event in data.get("events", []):
             competitions = event.get("competitions", [])
