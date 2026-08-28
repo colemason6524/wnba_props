@@ -61,7 +61,7 @@ def _logs_are_stale_for_screen(screen_date: date, logs: list) -> bool:
 def _max_log_age_days(screen_date: date) -> int:
     if _is_playoff_window(screen_date):
         return int(os.environ.get("PLAYOFF_LOG_STALE_DAYS", "2"))
-    return int(os.environ.get("REGULAR_SEASON_LOG_STALE_DAYS", "14"))
+    return int(os.environ.get("REGULAR_SEASON_LOG_STALE_DAYS", "21"))
 
 
 def _load_logs_with_playoff_refresh(

@@ -2,6 +2,16 @@
 
 Numbers-first daily WNBA prop screener for common player prop markets. The goal is to mirror the NBA/MLB props workflow in a separate WNBA repo: collect the slate, load no-key line values, evaluate the current model for overs and unders, save history for backtesting, and optionally send only stronger plays to Discord.
 
+## Start here for a continuation
+
+- [`docs/current_handoff.md`](docs/current_handoff.md) is the canonical verified state and next action.
+- [`docs/project_history_and_lessons.md`](docs/project_history_and_lessons.md) explains the successes, failures, and decisions that produced the current architecture.
+- [`docs/research_model_roadmap.md`](docs/research_model_roadmap.md) defines the projection theory, evidence rules, and skeptical review questions.
+- [`docs/shadow_projection_v1.md`](docs/shadow_projection_v1.md) documents the isolated PTS challenger.
+- [`docs/new_agent_prompt.md`](docs/new_agent_prompt.md) contains a copy-ready introduction for a new conversation.
+
+As of August 28, 2026, Windows production is healthy through August 27 and is prepared for the August 30 – September 16 World Cup break. The isolated shadow v1 completed its prospective collection and was formally rejected for promotion; see `docs/v1_evaluation.md` and the canonical handoff before interpreting scheduled-task status or changing anything.
+
 ## Current project state
 
 - Independent repo intended to live at `C:\Users\muski\wnba_props` on the Windows automation box and `/Users/colemason/Documents/wnba_props` on macOS.
@@ -135,7 +145,7 @@ If Discord says there are no plays, use the full-board command to distinguish be
 - **Line-source failure is not a no-plays result:** a populated feed that cannot match the ESPN slate records structured diagnostics, writes a `screen_failure_*.json` snapshot, exits nonzero, and optionally sends a distinct Discord data-failure message.
 - **WNBA-specific Discord webhook variable:** use `WNBA_PROPS_DISCORD_WEBHOOK_URL` so this project does not hijack MLB tasks that may already use `DISCORD_WEBHOOK_URL`.
 - **Pregame-only by default:** `PREGAME_ONLY=true` drops games that have already started. Late-day manual runs may show a smaller slate or no eligible games.
-- **Regular-season log freshness allows league breaks:** `REGULAR_SEASON_LOG_STALE_DAYS=14` prevents the board from zeroing out after WNBA breaks. Playoff freshness remains tighter by default with `PLAYOFF_LOG_STALE_DAYS=2`.
+- **Regular-season log freshness allows league breaks:** `REGULAR_SEASON_LOG_STALE_DAYS=21` prevents the board from zeroing out after WNBA breaks, including the multi-week World Cup pause. Playoff freshness remains tighter by default with `PLAYOFF_LOG_STALE_DAYS=2`.
 - **PowerShell wrapper avoids native stderr failure:** Python progress messages are written to stderr. The Windows task wrapper captures stdout/stderr through `Start-Process` temp files so normal progress output does not become a PowerShell `NativeCommandError`.
 
 ## Daily Automation
@@ -289,7 +299,7 @@ export DISCORD_LIMIT=5
 export LINE_SOURCE=playerprops
 export PLAYERPROPS_BOOK=FANDUEL
 export BREF_REQUEST_INTERVAL_SECONDS=6.0
-export REGULAR_SEASON_LOG_STALE_DAYS=14
+export REGULAR_SEASON_LOG_STALE_DAYS=21
 export PLAYOFF_LOG_STALE_DAYS=2
 export FANDUEL_EVENT_URLS="https://sportsbook.fanduel.com/basketball/wnba/golden-state-valkyries-@-indiana-fever-35819846?tab=player-points"
 ```
