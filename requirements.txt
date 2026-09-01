@@ -1,0 +1,6 @@
+# WNBA props runs on the Python standard library only.
+# No third-party packages are required; pin the interpreter instead.
+#
+# Production (Windows) and shadow tasks should call an absolute interpreter
+# path inside a dedicated venv created with this exact major.minor:
+python_requires = 3.9

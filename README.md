@@ -386,6 +386,21 @@ Important summary fields:
 - combined props such as PRA, P+A, P+R, and R+A are supported in code but depend on line-source coverage and have not been validated as deeply as PTS, REB, AST, and 3PM
 - direct FanDuel/DraftKings scraping remains unreliable enough that it should not be considered the production line path
 - backtesting depends on saved `outputs/history/screen_run_*.json` files from the runtime machine; those files are not committed
-- injury and availability flags are context signals, not automatic hard excludes
+- injury and availability flags are context signals for teammates; the candidate player's own `OUT`/`IR`/`SUSPENDED` status is now a hard exclusion
 - prices are captured when PlayerProps supplies them, but pricing does not yet affect candidate scoring and older snapshots cannot produce ROI
 - the `SEASON-`/`TEAM_OUT` suppression policy was selected from a small historical sample and must be evaluated prospectively through the saved shadow group
+
+## Break-sprint hardening (2026-08-31)
+
+Applied before the September 17 season resumption:
+
+- **Point-in-time safety:** production features use only games strictly before `SCREEN_DATE`; DNP/zero-minute rows are excluded everywhere (parity with the shadow model).
+- **Availability:** a player listed `OUT`, `Out For Season`, `Out Indefinitely`, `IR`, or `Suspended` is excluded from screening and counted in the run summary (`excluded unavailable`); injury-source failures now mark the run degraded instead of pretending there are no injuries.
+- **Run health:** every run is classified `healthy` / `degraded` / `failed` / `no_slate` using event-match, player-load, and evaluated-line gates (`MIN_EVENT_MATCH_RATIO`, `MIN_PLAYER_LOAD_RATIO`, `MIN_EVALUATED_LINES`). Discord is blocked on degraded runs unless `WNBA_ALLOW_DEGRADED_DISCORD=true`.
+- **Artifact before notify:** history is written atomically (temp file + readback validation + rename) before any Discord send; delivery outcome is recorded in a companion `screen_run_<ts>.delivery.json` and `outputs/health/run_status.jsonl`.
+- **Pregame guard:** games that start mid-run and candidates whose captured line is older than `MAX_LINE_AGE_MINUTES` (default 240) are dropped before output.
+- **Provenance:** every snapshot stores policy version, git commit, dirty flag, python version, config fingerprint, and thresholds. Scheduled Discord also requires a clean tree (`WNBA_REQUIRE_CLEAN_TREE=false` to override).
+- **WNBA total context:** the NBA-inherited 218/232 `HIGH_TOT`/`LOW_TOT` thresholds are replaced with WNBA-scale 172/156 (anchored to the frozen v1 league-total baseline 164 ± 5%); override with `TOTAL_CONTEXT_HIGH` / `TOTAL_CONTEXT_LOW`.
+- **Statistics:** `wnba_props/stats.py` provides slate-clustered bootstrap CIs, paired cluster diffs, and leave-one-cluster-out for any correlated-row evaluation.
+- **Backtests:** slates exported after tip are excluded; the Discord policy threshold is taken from snapshot provenance when present.
+- **Research:** August 3–30 holdout verdict (exact capped Discord policy): 53-49, ROI **-10.94%** (CI95 -26.8%..+7.3%) vs 59.4% break-even — no edge; score is inversely related to ROI. See `outputs/hunt/holdout_report_*.txt`, protocol in `outputs/hunt/HOLDOUT_PROTOCOL.md`, hypothesis ledger in `docs/research/ledger.md`, walk-forward diagnostics in `research/walkforward.py`.

@@ -120,6 +120,25 @@ class Settings:
     discord_webhook_url: str = ""
     discord_min_score: int = 8
     discord_limit: int = 5
+    total_context_high: float = 172.0
+    total_context_low: float = 156.0
+    min_event_match_ratio: float = 1.0
+    min_player_load_ratio: float = 0.9
+    min_evaluated_lines: int = 1
+    max_line_age_minutes: int = 240
+    allow_degraded_discord: bool = False
+    require_clean_tree: bool = True
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    return os.environ.get(name, str(default)).strip().lower() not in {"0", "false", "no"}
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, "").strip() or default)
+    except ValueError:
+        return default
 
 
 def load_settings() -> Settings:
@@ -167,4 +186,12 @@ def load_settings() -> Settings:
         ),
         discord_min_score=int(os.environ.get("DISCORD_MIN_SCORE", "8")),
         discord_limit=int(os.environ.get("DISCORD_LIMIT", "5")),
+        total_context_high=_env_float("TOTAL_CONTEXT_HIGH", 172.0),
+        total_context_low=_env_float("TOTAL_CONTEXT_LOW", 156.0),
+        min_event_match_ratio=_env_float("MIN_EVENT_MATCH_RATIO", 1.0),
+        min_player_load_ratio=_env_float("MIN_PLAYER_LOAD_RATIO", 0.9),
+        min_evaluated_lines=int(os.environ.get("MIN_EVALUATED_LINES", "1")),
+        max_line_age_minutes=int(os.environ.get("MAX_LINE_AGE_MINUTES", "240")),
+        allow_degraded_discord=_env_flag("WNBA_ALLOW_DEGRADED_DISCORD", False),
+        require_clean_tree=_env_flag("WNBA_REQUIRE_CLEAN_TREE", True),
     )

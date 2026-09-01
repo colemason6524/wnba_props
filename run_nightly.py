@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import subprocess
 import sys
-from dataclasses import asdict
+from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from shutil import rmtree
@@ -13,7 +15,7 @@ from wnba_props.cache import JsonCache
 from wnba_props.config import CACHE_DIR, OUTPUTS_DIR, load_settings
 from wnba_props.notifiers.discord import send_discord_embeds, send_discord_message
 from wnba_props.output import render_candidates, render_discord_embeds, render_line_board
-from wnba_props.screener import screen_candidates, summarize_return_context
+from wnba_props.screener import filter_logs_as_of, screen_candidates, summarize_return_context
 from wnba_props.sources.basketball_reference import BasketballReferenceSource
 from wnba_props.sources.draftkings import DraftKingsSource
 from wnba_props.sources.espn import EspnSlateSource
@@ -336,6 +338,175 @@ def _classify_team_injury_impacts(team_injuries: dict[str, list], logs_by_player
                 injury.impact_level = "team"
 
 
+@dataclass
+class RunHealth:
+    status: str
+    reasons: list[str] = field(default_factory=list)
+
+
+@dataclass
+class PregameGuardResult:
+    games: list
+    candidates: list
+    notes: list[str] = field(default_factory=list)
+
+
+def classify_run_health(
+    eligible_games: int,
+    matched_events: int | None,
+    players_with_lines: int,
+    players_loaded: int,
+    evaluated_lines: int,
+    degraded_reasons: list[str],
+    settings,
+) -> RunHealth:
+    reasons = list(degraded_reasons)
+    if eligible_games == 0:
+        return RunHealth(status="no_slate", reasons=reasons)
+    if matched_events is not None and matched_events / eligible_games < settings.min_event_match_ratio:
+        reasons.append(
+            f"event coverage {matched_events}/{eligible_games} below required ratio {settings.min_event_match_ratio:.2f}"
+        )
+    if players_with_lines and players_loaded / players_with_lines < settings.min_player_load_ratio:
+        reasons.append(
+            f"player log coverage {players_loaded}/{players_with_lines} below required ratio {settings.min_player_load_ratio:.2f}"
+        )
+    if evaluated_lines < settings.min_evaluated_lines:
+        reasons.append(
+            f"evaluated lines {evaluated_lines} below minimum {settings.min_evaluated_lines}"
+        )
+    return RunHealth(status="degraded" if reasons else "healthy", reasons=reasons)
+
+
+def apply_pregame_guard(
+    games: list,
+    candidates: list,
+    prop_lines: list,
+    now_utc: datetime,
+    max_line_age_minutes: int,
+) -> PregameGuardResult:
+    kept_games = list(games)
+    kept_candidates = list(candidates)
+    notes: list[str] = []
+
+    started = [game for game in kept_games if game.game_time <= now_utc]
+    if started:
+        started_pairs = {frozenset((game.home_team, game.away_team)) for game in started}
+        kept_games = [game for game in kept_games if frozenset((game.home_team, game.away_team)) not in started_pairs]
+        kept_candidates = [
+            candidate
+            for candidate in kept_candidates
+            if frozenset((candidate.team, candidate.opponent)) not in started_pairs
+        ]
+        notes.append(f"dropped {len(started)} game(s) that started during the run")
+
+    collected_by_key: dict[tuple[str, str, float], datetime] = {}
+    for line in prop_lines:
+        key = (normalize_name(line.player_name_raw), line.prop_type, round(float(line.line), 1))
+        previous = collected_by_key.get(key)
+        if previous is None or line.collected_at > previous:
+            collected_by_key[key] = line.collected_at
+    stale_count = 0
+    fresh_candidates: list = []
+    for candidate in kept_candidates:
+        collected = collected_by_key.get(
+            (normalize_name(candidate.player_name), candidate.prop_type, round(float(candidate.line), 1))
+        )
+        if collected is not None and (now_utc - collected).total_seconds() / 60.0 > max_line_age_minutes:
+            stale_count += 1
+            continue
+        fresh_candidates.append(candidate)
+    if stale_count:
+        notes.append(f"dropped {stale_count} candidate(s) with lines older than {max_line_age_minutes} minutes")
+    return PregameGuardResult(games=kept_games, candidates=fresh_candidates, notes=notes)
+
+
+def run_provenance(settings) -> dict:
+    commit = None
+    dirty = None
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        ).stdout.strip()
+        status_output = subprocess.run(
+            ["git", "status", "--porcelain", "-uno"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        ).stdout.strip()
+        dirty = bool(status_output)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    settings_view = {
+        key: value
+        for key, value in asdict(settings).items()
+        if key != "discord_webhook_url"
+    }
+    fingerprint = hashlib.sha256(
+        json.dumps(settings_view, default=str, sort_keys=True).encode("utf-8")
+    ).hexdigest()[:16]
+    return {
+        "policy_version": "prod-2026-08-31-safety",
+        "git_commit": commit,
+        "git_dirty": dirty,
+        "python_version": sys.version.split()[0],
+        "config_fingerprint": fingerprint,
+        "thresholds": asdict(settings.thresholds),
+        "discord_min_score": settings.discord_min_score,
+        "discord_suppress_flags": ["SEASON-", "TEAM_OUT"],
+        "discord_limit": settings.discord_limit,
+        "total_context_high": settings.total_context_high,
+        "total_context_low": settings.total_context_low,
+    }
+
+
+def record_run_health(payload: dict) -> Path:
+    health_dir = OUTPUTS_DIR / "health"
+    health_dir.mkdir(parents=True, exist_ok=True)
+    path = health_dir / "run_status.jsonl"
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, default=str, sort_keys=True) + "\n")
+    return path
+
+
+def export_run_history(filename_prefix: str, payload: dict) -> Path:
+    history_dir = OUTPUTS_DIR / "history"
+    history_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    path = history_dir / f"{filename_prefix}_{timestamp}.json"
+    serialized = json.dumps(payload, default=str, indent=2, sort_keys=True)
+    tmp_path = path.with_suffix(".tmp")
+    tmp_path.write_text(serialized)
+    reloaded = json.loads(tmp_path.read_text())
+    if reloaded.get("screen_date") != payload.get("screen_date"):
+        tmp_path.unlink(missing_ok=True)
+        raise RuntimeError("history artifact readback validation failed")
+    if len(reloaded.get("candidates", [])) != len(payload.get("candidates", [])):
+        tmp_path.unlink(missing_ok=True)
+        raise RuntimeError("history artifact candidate readback mismatch")
+    os.replace(tmp_path, path)
+    return path
+
+
+def write_delivery_status(history_path: Path, status: str, detail: str = "") -> Path:
+    payload = {
+        "artifact": history_path.name,
+        "status": status,
+        "detail": detail,
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+    }
+    path = history_path.with_name(history_path.stem + ".delivery.json")
+    tmp_path = path.with_suffix(".tmp")
+    tmp_path.write_text(json.dumps(payload, indent=2, sort_keys=True))
+    os.replace(tmp_path, path)
+    return path
+
+
 def main() -> int:
     settings = load_settings()
     warm_cache_only = warm_cache_mode_enabled()
@@ -387,6 +558,14 @@ def main() -> int:
             games = [game for game in games if game.game_time > now_utc]
         if not games:
             print(f"No eligible WNBA games found for {settings.screen_date.isoformat()}.", file=sys.stderr)
+            record_run_health(
+                {
+                    "recorded_at": datetime.now(timezone.utc).isoformat(),
+                    "screen_date": settings.screen_date.isoformat(),
+                    "status": "no_slate",
+                    "reasons": ["no eligible pregame games"],
+                }
+            )
             return 0
 
         prop_lines = line_source.fetch_prop_lines(games)
@@ -413,6 +592,14 @@ def main() -> int:
                 },
             )
             print(f"- Failure snapshot exported to {failure_path}", file=sys.stderr)
+            record_run_health(
+                {
+                    "recorded_at": datetime.now(timezone.utc).isoformat(),
+                    "screen_date": settings.screen_date.isoformat(),
+                    "status": "failed",
+                    "reasons": ["no prop lines from source"],
+                }
+            )
             if settings.send_discord:
                 discord_result = send_discord_message(
                     settings.discord_webhook_url,
@@ -427,16 +614,21 @@ def main() -> int:
                         file=sys.stderr,
                     )
             return 1
+        degraded_reasons: list[str] = []
         try:
             game_contexts = odds_context_source.fetch_game_context(settings.screen_date)
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
             game_contexts = {}
+            degraded_reasons.append(f"odds context unavailable: {exc}")
         team_injuries = {}
+        injury_failed_teams: list[str] = []
         for team in sorted({game.home_team for game in games} | {game.away_team for game in games}):
             try:
                 injuries = injury_source.fetch_team_injuries(team, settings.screen_date)
-            except Exception:
+            except Exception as exc:  # noqa: BLE001
                 injuries = []
+                injury_failed_teams.append(team)
+                degraded_reasons.append(f"injury source unavailable for {team}: {exc}")
             if injuries:
                 team_injuries[team] = injuries
 
@@ -497,6 +689,7 @@ def main() -> int:
                 if loaded_logs:
                     logs_by_player[injury.player_name_norm] = loaded_logs
 
+        logs_by_player = filter_logs_as_of(logs_by_player, settings.screen_date)
         _classify_team_injury_impacts(team_injuries, logs_by_player)
 
         if warm_cache_only:
@@ -538,17 +731,25 @@ def main() -> int:
             return 0
 
         screening_result = screen_candidates(settings, prop_lines, logs_by_player, game_contexts=game_contexts, team_injuries=team_injuries)
-        displayed_candidates = [candidate for candidate in screening_result.candidates if candidate.score >= settings.min_display_score]
-        hidden_candidates = len(screening_result.candidates) - len(displayed_candidates)
+        now_utc = datetime.now(timezone.utc)
+        if settings.pregame_only:
+            guard = apply_pregame_guard(games, screening_result.candidates, prop_lines, now_utc, settings.max_line_age_minutes)
+        else:
+            guard = PregameGuardResult(games=games, candidates=screening_result.candidates, notes=[])
+        kept_candidates = guard.candidates
+        for note in guard.notes:
+            print(f"- Pregame guard: {note}")
+        displayed_candidates = [candidate for candidate in kept_candidates if candidate.score >= settings.min_display_score]
+        hidden_candidates = len(kept_candidates) - len(displayed_candidates)
         return_context = summarize_return_context(
-            displayed_candidates,
+            kept_candidates,
             logs_by_player,
             team_injuries,
             settings.screen_date,
         )
         print(
             render_candidates(
-                screening_result.candidates,
+                kept_candidates,
                 min_score=settings.min_display_score,
                 team_injuries=team_injuries,
                 return_context=return_context,
@@ -559,7 +760,18 @@ def main() -> int:
             print("Evaluated Lines:")
             print(render_line_board(prop_lines, logs_by_player))
         print("")
+        matched_events = (getattr(line_source, "diagnostics", {}) or {}).get("matched_events")
+        health = classify_run_health(
+            eligible_games=len(games),
+            matched_events=matched_events,
+            players_with_lines=len(unique_player_keys_with_lines),
+            players_loaded=len([key for key in unique_player_keys_with_lines if key in logs_by_player]),
+            evaluated_lines=screening_result.evaluated_prop_lines,
+            degraded_reasons=degraded_reasons + [note for note in guard.notes if "started" in note],
+            settings=settings,
+        )
         print("Run summary:")
+        print(f"- Run health: {health.status.upper()}" + (f" ({'; '.join(health.reasons)})" if health.reasons else ""))
         print(f"- Unique players with lines: {len(unique_player_keys_with_lines)}")
         print(f"- Players loaded successfully: {len([key for key in unique_player_keys_with_lines if key in logs_by_player])}")
         print(f"- Same-day cache hits: {logs_source.stats.same_day_cache_hits}")
@@ -568,7 +780,8 @@ def main() -> int:
         print(f"- Stale cache fallbacks after 429: {logs_source.stats.stale_cache_fallbacks}")
         print(f"- Players skipped for data issues: {len(failures)}")
         print(f"- Prop lines evaluated: {screening_result.evaluated_prop_lines}")
-        print(f"- Prop lines that qualified: {len(screening_result.candidates)}")
+        print(f"- Players excluded as OUT/IR/suspended: {screening_result.excluded_unavailable_players}")
+        print(f"- Prop lines that qualified: {len(kept_candidates)}")
         print(f"- Prop lines displayed (score >= {settings.min_display_score}): {len(displayed_candidates)}")
         print(f"- Qualified props hidden below display threshold: {hidden_candidates}")
         print(f"- Prop lines evaluated but not qualified: {screening_result.non_qualifying_prop_lines}")
@@ -580,53 +793,54 @@ def main() -> int:
             if len(line_source.failures) > 20:
                 print(f"- ... and {len(line_source.failures) - 20} more")
 
-        if settings.send_discord:
-            embeds = render_discord_embeds(
-                screening_result.candidates,
-                screen_date=settings.screen_date,
-                games_count=len(games),
-                prop_line_count=len(prop_lines),
-                qualified_count=len(screening_result.candidates),
-                displayed_count=len(displayed_candidates),
-                line_source=settings.line_source,
-                bookmaker=settings.playerprops_book if settings.line_source == "playerprops" else settings.line_source.upper(),
-                min_score=settings.discord_min_score,
-                limit=settings.discord_limit,
-            )
-            discord_result = send_discord_embeds(settings.discord_webhook_url, embeds)
-            if discord_result.ok:
-                print("- Discord notification: sent")
-            else:
-                print(f"- Discord notification: failed ({discord_result.error or discord_result.status_code})")
-
-        backtest_export_path = export_run_history(
-            "screen_run",
-            {
-                "mode": "screen",
-                "exported_at": datetime.now(timezone.utc).isoformat(),
-                "screen_date": settings.screen_date.isoformat(),
-                "games": [asdict(game) for game in games],
-                "prop_lines": [asdict(line) for line in prop_lines],
-                "summary": {
-                    "unique_players_with_lines": len({normalize_name(line.player_name_raw) for line in prop_lines}),
-                    "players_loaded_successfully": len([key for key in unique_player_keys_with_lines if key in logs_by_player]),
-                    "same_day_cache_hits": logs_source.stats.same_day_cache_hits,
-                    "fresh_cache_hits": logs_source.stats.ttl_cache_hits,
-                    "fresh_bref_fetches": logs_source.stats.fresh_fetches,
-                    "stale_cache_fallbacks": logs_source.stats.stale_cache_fallbacks,
-                    "players_skipped_for_data_issues": len(failures),
-                    "prop_lines_evaluated": screening_result.evaluated_prop_lines,
-                    "prop_lines_qualified": len(screening_result.candidates),
-                    "prop_lines_not_qualified": screening_result.non_qualifying_prop_lines,
-                    "prop_lines_displayed": len(displayed_candidates),
-                    "qualified_hidden_below_threshold": hidden_candidates,
-                },
-                "candidates": [asdict(candidate) for candidate in screening_result.candidates],
-                "failures": sorted(failures),
-                "line_source_failures": list(getattr(line_source, "failures", [])),
+        provenance = run_provenance(settings)
+        history_payload = {
+            "mode": "screen",
+            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "screen_date": settings.screen_date.isoformat(),
+            "games": [asdict(game) for game in guard.games],
+            "prop_lines": [asdict(line) for line in prop_lines],
+            "provenance": provenance,
+            "health": {"status": health.status, "reasons": health.reasons},
+            "summary": {
+                "unique_players_with_lines": len({normalize_name(line.player_name_raw) for line in prop_lines}),
+                "players_loaded_successfully": len([key for key in unique_player_keys_with_lines if key in logs_by_player]),
+                "same_day_cache_hits": logs_source.stats.same_day_cache_hits,
+                "fresh_cache_hits": logs_source.stats.ttl_cache_hits,
+                "fresh_bref_fetches": logs_source.stats.fresh_fetches,
+                "stale_cache_fallbacks": logs_source.stats.stale_cache_fallbacks,
+                "players_skipped_for_data_issues": len(failures),
+                "players_excluded_unavailable": screening_result.excluded_unavailable_players,
+                "prop_lines_evaluated": screening_result.evaluated_prop_lines,
+                "prop_lines_qualified": len(kept_candidates),
+                "prop_lines_not_qualified": screening_result.non_qualifying_prop_lines,
+                "prop_lines_displayed": len(displayed_candidates),
+                "qualified_hidden_below_threshold": hidden_candidates,
+                "run_health": health.status,
             },
+            "candidates": [asdict(candidate) for candidate in kept_candidates],
+            "failures": sorted(failures),
+            "line_source_failures": list(getattr(line_source, "failures", [])),
+        }
+        history_path = export_run_history("screen_run", history_payload)
+        print(f"- History exported to {history_path}")
+        record_run_health(
+            {
+                "recorded_at": datetime.now(timezone.utc).isoformat(),
+                "screen_date": settings.screen_date.isoformat(),
+                "status": health.status,
+                "reasons": health.reasons,
+                "artifact": history_path.name,
+                "git_commit": provenance.get("git_commit"),
+                "git_dirty": provenance.get("git_dirty"),
+                "counts": {
+                    "players_with_lines": len(unique_player_keys_with_lines),
+                    "players_loaded": len([key for key in unique_player_keys_with_lines if key in logs_by_player]),
+                    "prop_lines_evaluated": screening_result.evaluated_prop_lines,
+                    "candidates": len(kept_candidates),
+                },
+            }
         )
-        print(f"- History exported to {backtest_export_path}")
 
         if failures:
             print("")
@@ -636,9 +850,48 @@ def main() -> int:
                 print(f"- {failure}")
             if len(sorted_failures) > 20:
                 print(f"- ... and {len(sorted_failures) - 20} more")
+
+        if settings.send_discord:
+            blocked_reason = ""
+            if health.status == "degraded" and not settings.allow_degraded_discord:
+                blocked_reason = f"run health is degraded ({'; '.join(health.reasons)})"
+            elif settings.require_clean_tree and provenance.get("git_dirty"):
+                blocked_reason = "git working tree is dirty (WNBA_REQUIRE_CLEAN_TREE=false to override)"
+            if blocked_reason:
+                print(f"- Discord notification: BLOCKED - {blocked_reason}", file=sys.stderr)
+                write_delivery_status(history_path, "blocked", blocked_reason)
+            else:
+                embeds = render_discord_embeds(
+                    kept_candidates,
+                    screen_date=settings.screen_date,
+                    games_count=len(guard.games),
+                    prop_line_count=len(prop_lines),
+                    qualified_count=len(kept_candidates),
+                    displayed_count=len(displayed_candidates),
+                    line_source=settings.line_source,
+                    bookmaker=settings.playerprops_book if settings.line_source == "playerprops" else settings.line_source.upper(),
+                    min_score=settings.discord_min_score,
+                    limit=settings.discord_limit,
+                )
+                discord_result = send_discord_embeds(settings.discord_webhook_url, embeds)
+                if discord_result.ok:
+                    print("- Discord notification: sent")
+                    write_delivery_status(history_path, "sent")
+                else:
+                    print(f"- Discord notification: failed ({discord_result.error or discord_result.status_code})")
+                    write_delivery_status(history_path, "failed", discord_result.error or str(discord_result.status_code))
+
         return 0
     except Exception as exc:  # noqa: BLE001
         print(f"Run failed: {exc}", file=sys.stderr)
+        record_run_health(
+            {
+                "recorded_at": datetime.now(timezone.utc).isoformat(),
+                "screen_date": getattr(load_settings(), "screen_date", date.today()).isoformat(),
+                "status": "failed",
+                "reasons": [str(exc)],
+            }
+        )
         return 1
 
 

@@ -20,6 +20,9 @@ def screen_candidates(
     candidates: list[Candidate] = []
     evaluated_prop_lines = 0
     non_qualifying_prop_lines = 0
+    excluded_unavailable_players = 0
+    logs_by_player = filter_logs_as_of(logs_by_player, settings.screen_date)
+    unavailable_players = _unavailable_player_keys(team_injuries or {})
     opponent_environment = _build_opponent_environment(logs_by_player)
     teammate_return_context = _build_teammate_return_context(
         logs_by_player,
@@ -30,6 +33,11 @@ def screen_candidates(
         player_key = normalize_name(line.player_name_raw)
         logs = logs_by_player.get(player_key, [])
         if not logs:
+            continue
+
+        if player_key in unavailable_players:
+            excluded_unavailable_players += 1
+            non_qualifying_prop_lines += 1
             continue
 
         if not _line_matches_recent_team(line.team, logs):
@@ -94,7 +102,34 @@ def screen_candidates(
         ),
         evaluated_prop_lines=evaluated_prop_lines,
         non_qualifying_prop_lines=non_qualifying_prop_lines,
+        excluded_unavailable_players=excluded_unavailable_players,
     )
+
+
+def filter_logs_as_of(
+    logs_by_player: dict[str, list[PlayerGameLog]],
+    screen_date: date,
+) -> dict[str, list[PlayerGameLog]]:
+    """Keep only strictly pre-screen-date, actually-played games for every feature."""
+    filtered: dict[str, list[PlayerGameLog]] = {}
+    for player_key, logs in logs_by_player.items():
+        usable = [
+            log
+            for log in logs
+            if log.game_date < screen_date and log.did_play and log.minutes > 0
+        ]
+        if usable:
+            filtered[player_key] = usable
+    return filtered
+
+
+def _unavailable_player_keys(team_injuries: dict[str, list[TeamInjury]]) -> set[str]:
+    unavailable: set[str] = set()
+    for injuries in team_injuries.values():
+        for injury in injuries:
+            if _is_out_status(injury.status.lower()):
+                unavailable.add(injury.player_name_norm)
+    return unavailable
 
 
 def summarize_return_context(
@@ -193,7 +228,15 @@ def _build_candidates_for_line(
         )
         if side == "UNDER":
             flags.append("U")
-        flags.extend(_context_flags(line.team, game_context, opp_avg))
+        flags.extend(
+            _context_flags(
+                line.team,
+                game_context,
+                opp_avg,
+                total_high=settings.total_context_high,
+                total_low=settings.total_context_low,
+            )
+        )
         matchup_adjustment, matchup_flags = _matchup_adjustment(
             screen_date=settings.screen_date,
             prop_type=line.prop_type,
@@ -465,7 +508,13 @@ def _team_spread(team: str, game_context: object | None) -> float | None:
     return None
 
 
-def _context_flags(team: str, game_context: object | None, opp_avg: float | None) -> list[str]:
+def _context_flags(
+    team: str,
+    game_context: object | None,
+    opp_avg: float | None,
+    total_high: float = 172.0,
+    total_low: float = 156.0,
+) -> list[str]:
     flags: list[str] = []
     spread = _team_spread(team, game_context)
     total = getattr(game_context, "total", None) if game_context is not None else None
@@ -475,9 +524,9 @@ def _context_flags(team: str, game_context: object | None, opp_avg: float | None
         elif abs(spread) <= 4:
             flags.append("CLOSE")
     if total is not None:
-        if total >= 232:
+        if total >= total_high:
             flags.append("HIGH_TOT")
-        elif total <= 218:
+        elif total <= total_low:
             flags.append("LOW_TOT")
     if opp_avg is not None:
         flags.append("OPPCTX")
@@ -536,7 +585,9 @@ def _injury_flags(player_name: str, team_injuries: list[TeamInjury]) -> list[str
     for injury in team_injuries:
         status = injury.status.lower()
         if injury.player_name_norm == player_norm:
-            if _is_uncertain_status(status):
+            if _is_out_status(status):
+                flags.append("SELF_OUT")
+            elif _is_uncertain_status(status):
                 flags.append("SELF_Q")
             continue
         if _is_out_status(status):
@@ -797,7 +848,7 @@ def _has_context_distortion(
 
 
 def _is_out_status(status: str) -> bool:
-    return status in {"out", "injured reserve", "suspended"}
+    return status in {"out", "out for season", "out indefinitely", "injured reserve", "suspended"}
 
 
 def _is_uncertain_status(status: str) -> bool:

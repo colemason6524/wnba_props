@@ -1,6 +1,29 @@
 # WNBA props project handoff
 
-Last verified: 2026-08-28, America/Detroit (previous full verification: 2026-08-10)
+Last verified: 2026-08-31, America/Detroit (previous: 2026-08-28)
+
+## August 31, 2026 break-sprint record
+
+Executed during the World Cup pause (no games Aug 30–Sep 16). All 77 unit tests pass.
+
+**Gate G1 — August holdout verdict (predeclared protocol in `outputs/hunt/HOLDOUT_PROTOCOL.md`):**
+the exact capped Discord digest policy (score ≥8, suppress `SEASON-`/`TEAM_OUT`, production sort, 5/side cap, flat stake at captured price) graded on Aug 3–30 (25 slates, 110 capped rows, 102 settled, all priced, zero post-tip snapshots):
+
+- Record 53-49, hit rate 51.96%, units -11.15, **ROI -10.94% (slate-clustered CI95 -26.8%..+7.3%)** vs 59.4% break-even hit rate → **no edge; policy left unchanged per protocol**
+- Score is inversely related to ROI (8: +18.3%, 9: -27.7%, 10: -35.7%, 11: -64.6%) — recorded as prospective hypothesis H5, not tuned
+- Suppressed rows hit 81.25% (n=16) — opposite sign of July; treated as noise (H6)
+- Price integrity clean: 0 american/decimal mismatches, mean vig 6.84%, median line lead 510 min
+
+**Production hardening (all with regression tests in `tests/test_safety_guards.py`):**
+point-in-time log filtering (`game_date < SCREEN_DATE`), DNP/zero-minute exclusion, own-player `OUT`/`IR`/`SUSPENDED` hard exclusion, injury-source failure = degraded run, run-health classification (`healthy`/`degraded`/`failed`/`no_slate`) with coverage gates and Discord blocking, atomic history artifact written and validated before Discord (delivery status in `<artifact>.delivery.json` + `outputs/health/run_status.jsonl`), pregame guard dropping started games and stale-line candidates (`MAX_LINE_AGE_MINUTES`), full run provenance (policy version, git commit, dirty flag, config fingerprint) in every snapshot, clean-tree requirement for scheduled Discord, and WNBA-scale total-context thresholds (172/156 replacing NBA 218/232).
+
+**Statistics/research infrastructure:** `wnba_props/stats.py` (slate-clustered bootstrap CIs, paired cluster diffs, LOSO) with tests; snapshot-faithful backtests (post-tip slates excluded, snapshot policy used when present); hypothesis ledger `docs/research/ledger.md`; walk-forward harness `research/walkforward.py` with first diagnostics — recency-weighted minutes beat L5/season (MAE 4.375 vs 4.480/4.642), minutes×rate blend beats points L5 (4.500 vs 4.791), regulars show ~4.6% next-game absence mass (DNP zero-inflation needed in v3).
+
+**Shadow v2 verified for deployment:** `codex/wnba-shadow-v2` @ `f663c49` — all 62 branch tests pass, calibration artifact sha256 matches the documented `da5052ab…` exactly. Deployed to the Windows shadow checkout so prospective v2 collection starts with an empty evidence gate when games resume.
+
+**Ops:** `requirements.txt` (stdlib-only, pin interpreter), GitHub Actions CI (ubuntu+windows, py3.9/3.12, compileall + unittest + PowerShell wrapper parse check).
+
+Read this file before changing code, deployment, model policy, or schedules. The project has two deliberately separate systems: a working production screener and a research-only projection challenger.
 
 ## August 28, 2026 evidence note
 

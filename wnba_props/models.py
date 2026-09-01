@@ -101,6 +101,7 @@ class ScreeningResult:
     candidates: List[Candidate]
     evaluated_prop_lines: int
     non_qualifying_prop_lines: int
+    excluded_unavailable_players: int = 0
 
 
 @dataclass

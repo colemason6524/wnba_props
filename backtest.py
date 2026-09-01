@@ -113,8 +113,47 @@ def all_history_mode_enabled() -> bool:
     return "--all-history" in sys.argv
 
 
-def _load_latest_predictions() -> tuple[list[dict], list[str]]:
-    payloads: list[tuple[datetime, str, list[dict]]] = []
+def _payload_game_times(payload: dict) -> list[datetime]:
+    times: list[datetime] = []
+    for game in payload.get("games", []):
+        raw = str(game.get("game_time") or "").strip().replace(" ", "T")
+        if not raw:
+            continue
+        try:
+            parsed = datetime.fromisoformat(raw)
+        except ValueError:
+            continue
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        times.append(parsed)
+    return times
+
+
+def _slate_exported_after_tip(payload: dict) -> bool:
+    exported = payload.get("exported_at")
+    if not exported:
+        return False
+    try:
+        exported_at = datetime.fromisoformat(str(exported))
+    except ValueError:
+        return False
+    if exported_at.tzinfo is None:
+        exported_at = exported_at.replace(tzinfo=timezone.utc)
+    game_times = _payload_game_times(payload)
+    return bool(game_times) and exported_at > min(game_times)
+
+
+def _snapshot_policy(payload: dict) -> dict:
+    provenance = payload.get("provenance") or {}
+    return {
+        "discord_min_score": provenance.get("discord_min_score"),
+        "discord_limit": provenance.get("discord_limit"),
+        "suppress_flags": provenance.get("discord_suppress_flags"),
+    }
+
+
+def _load_latest_predictions() -> tuple[list[dict], list[str], dict]:
+    payloads: list[tuple[datetime, str, list[dict], dict]] = []
     for path in _history_files():
         payload = json.loads(path.read_text())
         if payload.get("mode") != "screen":
@@ -123,28 +162,27 @@ def _load_latest_predictions() -> tuple[list[dict], list[str]]:
         if not screen_date:
             continue
         exported_at = datetime.fromisoformat(payload.get("exported_at") or datetime.now(timezone.utc).isoformat())
-        payloads.append((exported_at, screen_date, payload.get("candidates", [])))
+        payloads.append((exported_at, screen_date, payload.get("candidates", []), payload))
 
     if not payloads:
-        return [], []
+        return [], [], {"excluded_post_tip": [], "policy_by_slate": {}}
 
     if all_history_mode_enabled():
-        selected_payloads: list[tuple[datetime, str, list[dict]]] = []
-        latest_by_date: dict[str, tuple[datetime, str, list[dict]]] = {}
-        for exported_at, screen_date, candidates in payloads:
+        latest_by_date: dict[str, tuple[datetime, str, list[dict], dict]] = {}
+        for exported_at, screen_date, candidates, payload in payloads:
             previous = latest_by_date.get(screen_date)
             if previous is None or exported_at > previous[0]:
-                latest_by_date[screen_date] = (exported_at, screen_date, candidates)
+                latest_by_date[screen_date] = (exported_at, screen_date, candidates, payload)
         selected_payloads = list(latest_by_date.values())
-        selected_dates = sorted({screen_date for _, screen_date, _ in payloads})
+        selected_dates = sorted(latest_by_date)
     else:
         latest_completed_screen_date = max(
             (
                 screen_date
-                for _, screen_date, _ in payloads
+                for _, screen_date, _, _ in payloads
                 if date.fromisoformat(screen_date) < date.today()
             ),
-            default=max(screen_date for _, screen_date, _ in payloads),
+            default=max(screen_date for _, screen_date, _, _ in payloads),
         )
         selected_payloads = [
             item for item in payloads
@@ -153,10 +191,24 @@ def _load_latest_predictions() -> tuple[list[dict], list[str]]:
         selected_payloads = [max(selected_payloads, key=lambda item: item[0])]
         selected_dates = [latest_completed_screen_date]
 
+    kept_payloads = []
+    excluded_post_tip: list[str] = []
+    for item in selected_payloads:
+        payload = item[3]
+        if _slate_exported_after_tip(payload):
+            excluded_post_tip.append(item[1])
+            continue
+        kept_payloads.append(item)
+
+    policy_by_slate = {item[1]: _snapshot_policy(item[3]) for item in kept_payloads}
+
     loaded_predictions: list[dict] = []
-    for _, screen_date, candidates in selected_payloads:
+    for _, screen_date, candidates, _ in kept_payloads:
         loaded_predictions.extend(candidate | {"screen_date": screen_date} for candidate in candidates)
-    return loaded_predictions, selected_dates
+    return loaded_predictions, selected_dates, {
+        "excluded_post_tip": excluded_post_tip,
+        "policy_by_slate": policy_by_slate,
+    }
 
 
 def _normalize_team_abbr(value: str) -> str:
@@ -776,13 +828,25 @@ def _export_backtest_report(screen_date: str, report_text: str, mode: str = "sin
 
 
 def main() -> int:
-    predictions, included_dates = _load_latest_predictions()
+    predictions, included_dates, load_meta = _load_latest_predictions()
     if not predictions:
         print("No screen run history found in outputs/history yet.")
         print("Run python3 run_nightly.py first to generate backtest snapshots.")
         return 0
 
     settings = load_settings()
+    excluded_post_tip = load_meta.get("excluded_post_tip", [])
+    policy_by_slate = load_meta.get("policy_by_slate", {})
+    snapshot_scores = [
+        policy.get("discord_min_score")
+        for policy in policy_by_slate.values()
+        if policy.get("discord_min_score") is not None
+    ]
+    policy_source = "current environment"
+    policy_discord_score = settings.discord_min_score
+    if snapshot_scores and len(set(snapshot_scores)) == 1 and len(snapshot_scores) == len(policy_by_slate):
+        policy_discord_score = snapshot_scores[0]
+        policy_source = "snapshot provenance"
     report = _resolve_predictions(predictions)
     resolved = report.resolved
     if not resolved and not report.voided:
@@ -797,7 +861,7 @@ def main() -> int:
     displayed_resolved = [row for row in resolved if row.score >= settings.min_display_score]
     displayed_pushes = sum(1 for row in displayed_resolved if row.outcome == "push")
     displayed_by_side = Counter(row.side for row in displayed_resolved)
-    discord_score_resolved = [row for row in resolved if row.score >= settings.discord_min_score]
+    discord_score_resolved = [row for row in resolved if row.score >= policy_discord_score]
     discord_policy_resolved = [
         row
         for row in discord_score_resolved
@@ -811,6 +875,9 @@ def main() -> int:
     else:
         lines.append(f"- Screen date included: {included_dates[0]}")
     lines.append(f"- Latest unique predictions loaded: {len(predictions)}")
+    if excluded_post_tip:
+        lines.append(f"- Slates excluded for post-tip export: {', '.join(excluded_post_tip)}")
+    lines.append(f"- Notification policy source: {policy_source} (score >= {policy_discord_score})")
     lines.append(f"- Finished predictions graded: {len(resolved)}")
     lines.append(f"- Void/DNP predictions: {len(report.voided)}")
     lines.append(f"- Unresolved finished predictions: {len(report.unresolved)}")
@@ -831,7 +898,7 @@ def main() -> int:
         lines.append(f"- Displayed unders resolved: {displayed_by_side.get('UNDER', 0)}")
         lines.append(
             f"- Discord policy plays graded: {len(discord_policy_resolved)} "
-            f"(score >= {settings.discord_min_score}, excluding "
+            f"(score >= {policy_discord_score}, excluding "
             f"{', '.join(sorted(DISCORD_SUPPRESS_FLAGS))})"
         )
         lines.append(f"- Discord policy hit rate: {(_hit_rate(discord_policy_resolved) * 100):.1f}%")
@@ -856,7 +923,7 @@ def main() -> int:
             _render_policy_performance(
                 resolved,
                 display_score=settings.min_display_score,
-                discord_score=settings.discord_min_score,
+                discord_score=policy_discord_score,
             )
         )
         lines.append("")

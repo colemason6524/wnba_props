@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.9", "3.12"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Byte-compile all sources
+        run: python -m compileall -q run_nightly.py backtest.py preview_lines.py wnba_props tests
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
+
+  wrapper-smoke:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: PowerShell syntax check of scheduled-task wrappers
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem scripts -Filter *.ps1
+          foreach ($file in $files) {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$null, [ref]$errors) | Out-Null
+            if ($errors.Count -gt 0) {
+              Write-Error "Parse errors in $($file.Name): $errors"
+              exit 1
+            }
+          }
+          Write-Host "All PowerShell wrappers parse cleanly."
