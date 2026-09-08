@@ -1,0 +1,13 @@
+[Unit]
+Description=WNBA hourly shadow capture (frozen v2 worktree)
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=%h/wnba_props/scripts/run_linux_task.sh
+ConditionPathExists=%h/wnba_props_shadow/config/shadow_v2_calibration.json
+
+[Service]
+Type=oneshot
+Environment=PROJECT_DIR=%h/wnba_props_shadow
+Environment=WNBA_PROPS_PYTHON_EXE=%h/wnba_props/.venv/bin/python
+ExecStart=%h/wnba_props/scripts/run_linux_task.sh shadow-capture
+TimeoutStartSec=infinity

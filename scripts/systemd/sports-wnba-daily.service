@@ -1,0 +1,10 @@
+[Unit]
+Description=WNBA daily board
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=%h/wnba_props/scripts/run_linux_task.sh
+
+[Service]
+Type=oneshot
+ExecStart=%h/wnba_props/scripts/run_linux_task.sh daily
+TimeoutStartSec=infinity

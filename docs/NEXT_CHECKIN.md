@@ -7,7 +7,7 @@ Last written: 2026-09-08 ET. Canonical detail: `docs/current_handoff.md` + `docs
 | Surface | Path | HEAD / branch |
 | --- | --- | --- |
 | Mac primary | `/Users/colemason/Documents/wnba_props` | `main` (working copy + bulk store; no scheduled jobs) |
-| Azure VM live | `~/wnba_props` | `main` (systemd: daily 10:56 ET, shadow capture hourly 09–23 ET, shadow grade 06:17 ET) |
+| Azure VM live | `~/wnba_props` | `main` (systemd: daily 10:56 ET, shadow capture hourly 10–22 ET, shadow grade 06:17 ET) |
 | Azure VM shadow | `~/wnba_props_shadow` | frozen `codex/wnba-shadow-v2` worktree — **do not mix with live** |
 | Windows | `C:\Users\muski\wnba_props*` | **RETIRED Sep 2026 — do not use** |
 
@@ -30,6 +30,7 @@ Calendar: World Cup pause **through Sep 16**; resume **Sep 17**; playoffs **Sep 
 1. **Wed Sep 17 after 11:00 ET** — first live board after resume. Confirm players load (staleness 21d), Discord delivery artifact, no SEASON-/stale mass-skip. Then `scripts/sync_from_vm.sh`.
 2. **Playoffs ~Sep 27** — confirm WNBA playoff window `{9,10}` behavior.
 3. **OpenCode edge hunt (small, after resume):** instrument score-band hit rates (H5) on **new** slates only; OR continue minutes×rate / DNP zero-inflation toward a frozen v3 candidate via `research/walkforward.py` — one ledger experiment, predeclared.
+4. **Season end (~mid-Oct, after Finals):** `systemctl --user disable --now` the three WNBA timers on the VM; re-enable next season. Unit copies live in `scripts/systemd/`.
 
 ## When Cole says "get to work"
 

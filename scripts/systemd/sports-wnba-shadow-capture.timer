@@ -1,0 +1,24 @@
+[Unit]
+Description=Schedule WNBA hourly shadow capture
+
+[Timer]
+OnCalendar=*-*-* 10:13:00 America/Detroit
+OnCalendar=*-*-* 11:13:00 America/Detroit
+OnCalendar=*-*-* 12:13:00 America/Detroit
+OnCalendar=*-*-* 13:13:00 America/Detroit
+OnCalendar=*-*-* 14:13:00 America/Detroit
+OnCalendar=*-*-* 15:13:00 America/Detroit
+OnCalendar=*-*-* 16:13:00 America/Detroit
+OnCalendar=*-*-* 17:13:00 America/Detroit
+OnCalendar=*-*-* 18:13:00 America/Detroit
+OnCalendar=*-*-* 19:13:00 America/Detroit
+OnCalendar=*-*-* 20:13:00 America/Detroit
+OnCalendar=*-*-* 21:13:00 America/Detroit
+OnCalendar=*-*-* 22:13:00 America/Detroit
+AccuracySec=1s
+RandomizedDelaySec=0
+Persistent=false
+Unit=sports-wnba-shadow-capture.service
+
+[Install]
+WantedBy=timers.target

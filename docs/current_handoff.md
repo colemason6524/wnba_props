@@ -14,7 +14,8 @@ New topology:
   always-on runner. `~/wnba_props` on `main` (production daily), plus
   `~/wnba_props_shadow` as a git worktree of frozen `codex/wnba-shadow-v2`
   (shadow capture/grade). Systemd user timers: `sports-wnba-daily`
-  (10:56 ET), `sports-wnba-shadow-capture` (hourly 09:00–23:00 ET),
+  (10:56 ET), `sports-wnba-shadow-capture` (hourly 10:00–22:00 ET; 09:13/23:13
+  removed Sep 8 as dead hours — zero games lost on the Jul–Aug schedule),
   `sports-wnba-shadow-grade` (06:17 ET). Secrets in
   `~/.config/wnba_props/env` (mode 600, webhook configured). The tmux
   scheduler experiment was removed; timers are the mechanism.

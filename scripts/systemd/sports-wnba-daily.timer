@@ -1,0 +1,12 @@
+[Unit]
+Description=Schedule WNBA daily board
+
+[Timer]
+OnCalendar=*-*-* 10:56:00 America/Detroit
+AccuracySec=1s
+RandomizedDelaySec=0
+Persistent=false
+Unit=sports-wnba-daily.service
+
+[Install]
+WantedBy=timers.target

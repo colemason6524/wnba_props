@@ -10,7 +10,7 @@ Numbers-first daily WNBA prop screener for common player prop markets. The goal 
 - [`docs/shadow_projection_v1.md`](docs/shadow_projection_v1.md) documents the isolated PTS challenger.
 - [`docs/new_agent_prompt.md`](docs/new_agent_prompt.md) contains a copy-ready introduction for a new conversation.
 
-As of September 8, 2026, production runs on a lightweight Azure VM via systemd user timers (daily board 10:56 ET, shadow capture hourly 09:00–23:00 ET, shadow grade 06:17 ET), with the Mac as the primary working copy and bulk store. The Windows box is retired. The isolated shadow v1 completed its prospective collection and was formally rejected for promotion; shadow v2 collects prospectively from a frozen worktree on the VM. See `docs/v1_evaluation.md` and the canonical handoff before interpreting timer status or changing anything.
+As of September 8, 2026, production runs on a lightweight Azure VM via systemd user timers (daily board 10:56 ET, shadow capture hourly 10:00–22:00 ET, shadow grade 06:17 ET), with the Mac as the primary working copy and bulk store. The Windows box is retired. The isolated shadow v1 completed its prospective collection and was formally rejected for promotion; shadow v2 collects prospectively from a frozen worktree on the VM. See `docs/v1_evaluation.md` and the canonical handoff before interpreting timer status or changing anything.
 
 ## Current project state
 
@@ -159,7 +159,7 @@ On the VM, `scripts/run_linux_task.sh` runs the three jobs with a shared
 flock lock, per-task logs under `outputs/logs/`, and timeouts. Secrets live
 in `~/.config/wnba_props/env` (mode 600, never synced). The user timers are
 `~/.config/systemd/user/sports-wnba-daily.timer` (daily 10:56 ET),
-`sports-wnba-shadow-capture.timer` (hourly 09:00–23:00 ET), and
+`sports-wnba-shadow-capture.timer` (hourly 10:00–22:00 ET), and
 `sports-wnba-shadow-grade.timer` (06:17 ET); the shadow services run from the
 `~/wnba_props_shadow` v2 worktree via `PROJECT_DIR`/`WNBA_PROPS_PYTHON_EXE`
 overrides while sharing the main checkout's venv and lock.
