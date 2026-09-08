@@ -6,5 +6,10 @@ __pycache__/
 outputs/backtests/
 outputs/history/
 outputs/logs/
+outputs/hunt/
+outputs/research/
+outputs/health/
+outputs/vm-logs/
+outputs/shadow-vm/
 .env
 .DS_Store

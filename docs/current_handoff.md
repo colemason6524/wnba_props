@@ -1,6 +1,29 @@
 # WNBA props project handoff
 
-Last verified: 2026-08-31, America/Detroit (previous: 2026-08-28)
+Last verified: 2026-09-08, America/Detroit (previous: 2026-08-31)
+
+## September 8, 2026 topology change (Windows retired, Azure VM primary)
+
+The Windows box became unreliable (wifi drops, missed tasks) and is retired.
+New topology:
+
+- **Mac** (`/Users/colemason/Documents/wnba_props`, `main`): primary working
+  copy and bulk store (full history, hunt/research data, hard-drive overflow
+  handled separately). No scheduled jobs on the Mac.
+- **Azure VM** (`azureuser@130.131.0.6`, Ubuntu 22.04, ~900MB RAM): lightweight
+  always-on runner. `~/wnba_props` on `main` (production daily), plus
+  `~/wnba_props_shadow` as a git worktree of frozen `codex/wnba-shadow-v2`
+  (shadow capture/grade). Systemd user timers: `sports-wnba-daily`
+  (10:56 ET), `sports-wnba-shadow-capture` (hourly 09:00–23:00 ET),
+  `sports-wnba-shadow-grade` (06:17 ET). Secrets in
+  `~/.config/wnba_props/env` (mode 600, webhook configured). The tmux
+  scheduler experiment was removed; timers are the mechanism.
+- VM stays lightweight: ~24MB checkout, stdlib-only venv, tiny `.cache`;
+  research bulk lives on the Mac. Pull VM outputs with
+  `scripts/sync_from_vm.sh` (history, health, logs, shadow outputs).
+- Shadow capture on the VM was running rejected v1 from `main`; it now runs
+  frozen v2 from the worktree with an empty evidence gate for the Sep 17
+  resumption.
 
 ## August 31, 2026 break-sprint record
 
@@ -49,9 +72,10 @@ The production system must remain unchanged while the shadow defect is repaired 
 
 ## Authoritative locations and Git state
 
-- macOS working copy: `/Users/colemason/Documents/wnba_props`
-- Windows production: `C:\Users\muski\wnba_props`
-- Windows shadow: `C:\Users\muski\wnba_props_shadow`
+- macOS working copy (primary): `/Users/colemason/Documents/wnba_props`
+- Azure VM production: `~/wnba_props` on `main` (systemd user timers)
+- Azure VM shadow: `~/wnba_props_shadow` worktree of frozen `codex/wnba-shadow-v2`
+- Windows production/shadow (`C:\Users\muski\wnba_props*`): RETIRED September 2026, do not use
 - Windows production branch/commit verified August 10: `main` at `ca09a11`
 - Windows shadow branch/commit verified August 10: `codex/wnba-shadow-collection` at `1aa3a1c`
 

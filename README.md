@@ -10,13 +10,14 @@ Numbers-first daily WNBA prop screener for common player prop markets. The goal 
 - [`docs/shadow_projection_v1.md`](docs/shadow_projection_v1.md) documents the isolated PTS challenger.
 - [`docs/new_agent_prompt.md`](docs/new_agent_prompt.md) contains a copy-ready introduction for a new conversation.
 
-As of August 28, 2026, Windows production is healthy through August 27 and is prepared for the August 30 – September 16 World Cup break. The isolated shadow v1 completed its prospective collection and was formally rejected for promotion; see `docs/v1_evaluation.md` and the canonical handoff before interpreting scheduled-task status or changing anything.
+As of September 8, 2026, production runs on a lightweight Azure VM via systemd user timers (daily board 10:56 ET, shadow capture hourly 09:00–23:00 ET, shadow grade 06:17 ET), with the Mac as the primary working copy and bulk store. The Windows box is retired. The isolated shadow v1 completed its prospective collection and was formally rejected for promotion; shadow v2 collects prospectively from a frozen worktree on the VM. See `docs/v1_evaluation.md` and the canonical handoff before interpreting timer status or changing anything.
 
 ## Current project state
 
-- Independent repo intended to live at `C:\Users\muski\wnba_props` on the Windows automation box and `/Users/colemason/Documents/wnba_props` on macOS.
+- Independent repo: primary working copy and bulk store on macOS at `/Users/colemason/Documents/wnba_props`; always-on runner is a lightweight Azure VM (`~/wnba_props` on `main`, plus a `~/wnba_props_shadow` worktree of `codex/wnba-shadow-v2`). The Windows box (`C:\Users\muski\wnba_props`) is retired as of September 2026.
 - Default daily flow is operational: ESPN slate, PlayerProps.ai line values, Basketball-Reference/ESPN logs, ESPN injuries and odds context, terminal board, JSON history export, and optional Discord notification.
-- Windows Task Scheduler is the primary deployment target. The checked-in Windows wrapper assumes `C:\Users\muski\wnba_props`, `python`, and Windows PowerShell 5.1.
+- Azure VM systemd user timers are the primary deployment target (`scripts/run_linux_task.sh` + `~/.config/systemd/user/sports-wnba-*.timer`). The Windows Task Scheduler wrapper remains in `scripts/` for reference only.
+- Pull VM runtime outputs to the Mac with `scripts/sync_from_vm.sh` (history, health, logs, shadow outputs; pull-only, secrets never move).
 - The model is intentionally still close to the NBA-style heuristic model. Feature engineering and WNBA-specific model tuning are future work, not current behavior.
 - Saved caches, logs, history exports, and backtest reports are local runtime artifacts under `.cache/` and `outputs/`; they are intentionally ignored by git.
 
@@ -152,7 +153,23 @@ If Discord says there are no plays, use the full-board command to distinguish be
 
 The project is ready for daily collection once the normal run completes and writes a history file.
 
-### Windows Task Scheduler
+### Linux (Azure VM) systemd timers — primary
+
+On the VM, `scripts/run_linux_task.sh` runs the three jobs with a shared
+flock lock, per-task logs under `outputs/logs/`, and timeouts. Secrets live
+in `~/.config/wnba_props/env` (mode 600, never synced). The user timers are
+`~/.config/systemd/user/sports-wnba-daily.timer` (daily 10:56 ET),
+`sports-wnba-shadow-capture.timer` (hourly 09:00–23:00 ET), and
+`sports-wnba-shadow-grade.timer` (06:17 ET); the shadow services run from the
+`~/wnba_props_shadow` v2 worktree via `PROJECT_DIR`/`WNBA_PROPS_PYTHON_EXE`
+overrides while sharing the main checkout's venv and lock.
+
+After changing a unit file: `systemctl --user daemon-reload`. Check status
+with `systemctl --user list-timers` and per-task logs in `outputs/logs/`.
+The VM checkout must stay on a clean `main` or scheduled Discord is blocked
+by `WNBA_REQUIRE_CLEAN_TREE`.
+
+### Windows Task Scheduler (retired September 2026)
 
 After cloning the repo on Windows, test the exact scheduled command manually from PowerShell:
 
@@ -231,7 +248,7 @@ and the task log should end with either `Finished WNBA props with exit code 0` o
 
 If the repo is not at `C:\Users\muski\wnba_props`, edit `PROJECT_DIR` in `scripts\run_wnba_props_task.cmd` or pass the correct `-ProjectDir` when testing the PowerShell script.
 
-### macOS launchd
+### macOS launchd (manual use only — not scheduled)
 
 Test the exact scheduled command manually:
 
@@ -251,7 +268,7 @@ Every successful nightly screen still writes the backtest-ready JSON snapshot to
 outputs/history/
 ```
 
-Install the macOS daily task. The checked-in plist is currently scheduled for 5:30 PM local time; WNBA slates can start earlier, so Windows production automation currently uses an 11:00 AM pregame run.
+Install the macOS daily task only for manual/local runs — nothing is scheduled on the Mac; the VM timers are the production schedule. The checked-in plist is currently scheduled for 5:30 PM local time; WNBA slates can start earlier, so VM production automation uses a 10:56 AM pregame run.
 
 ```bash
 mkdir -p ~/Library/LaunchAgents
