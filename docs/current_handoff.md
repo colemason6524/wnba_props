@@ -33,7 +33,7 @@ Executed during the World Cup pause (no games Aug 30–Sep 16). All 77 unit test
 **Gate G1 — August holdout verdict (predeclared protocol in `outputs/hunt/HOLDOUT_PROTOCOL.md`):**
 the exact capped Discord digest policy (score ≥8, suppress `SEASON-`/`TEAM_OUT`, production sort, 5/side cap, flat stake at captured price) graded on Aug 3–30 (25 slates, 110 capped rows, 102 settled, all priced, zero post-tip snapshots):
 
-- Record 53-49, hit rate 51.96%, units -11.15, **ROI -10.94% (slate-clustered CI95 -26.8%..+7.3%)** vs 59.4% break-even hit rate → **no edge; policy left unchanged per protocol**
+- Record 53-47-2 (W-L-void; the earlier "53-49 / 51.96%" counted the 2 DNP voids as losses — fixed 2026-09-08), hit rate 53.00%, units -11.15, **ROI -10.94% (slate-clustered CI95 -26.8%..+7.3%)** vs 59.4% break-even hit rate → **no edge; policy left unchanged per protocol**
 - Score is inversely related to ROI (8: +18.3%, 9: -27.7%, 10: -35.7%, 11: -64.6%) — recorded as prospective hypothesis H5, not tuned
 - Suppressed rows hit 81.25% (n=16) — opposite sign of July; treated as noise (H6)
 - Price integrity clean: 0 american/decimal mismatches, mean vig 6.84%, median line lead 510 min
