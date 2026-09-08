@@ -14,7 +14,7 @@ Last written: 2026-09-08 ET. Canonical detail: `docs/current_handoff.md` + `docs
 SSH: `ssh -i /Users/colemason/Downloads/RunThemScripts_key.pem azureuser@130.131.0.6`.
 Pull VM outputs: `scripts/sync_from_vm.sh` (history, health, logs, shadow).
 
-**Gate G1 (done):** Aug 3–30 Discord policy holdout 53-49, ROI −10.94%, **no edge**. Policy unchanged. Do not recut. H5/H6 are prospective only.
+**Gate G1 (done):** Aug 3–30 Discord policy holdout **53-47-2** (W-L-void), −11.15u, ROI −10.94%, **no edge**. Policy unchanged. Do not recut. H5/H6 are prospective only. (The earlier "53-49" was a void-accounting artifact — see 2026-09-08 entry below.)
 
 Calendar: World Cup pause **through Sep 16**; resume **Sep 17**; playoffs **Sep 27**.
 
@@ -39,3 +39,11 @@ If before Sep 17: leave live alone; only shadow/research if explicitly assigned.
 ## Tonight stamp (2026-09-08)
 
 Topology cutover done: Windows retired, Azure VM primary (timers enabled, webhook configured, v2 shadow worktree deployed), Mac holds bulk. Still pause through Sep 16; next real look Sep 17 11:00 ET.
+
+## 2026-09-08 — holdout void-accounting fix (reporting only)
+
+- `outputs/hunt/grade_holdout.py` counted the 2 void (DNP) rows as losses in W-L and in the hit-rate denominator (voids had `profit_units = 0.0` so they entered the priced set, and anything with `outcome != "win"` was a loss). Units/ROI were already correct (0u per void).
+- Fixed: new pure `tally_record()` reports W-L-push-void separately; hit rate = wins / (wins + losses). By-side / by-prop / by-price / by-score / per-slate tables use the same tally. `dnp_as_loss` sensitivity still treats voids as losses (consistent with its −1u).
+- Corrected primary line: **53-47-2, −11.15u, ROI −10.94%** (CI95 −26.80%..+7.29%), hit 53.00% (was 51.96%). Verdict unchanged: NOT ESTABLISHED. New report `outputs/hunt/holdout_report_20260908T232616Z.txt` (old 20260901 reports left as-is).
+- Production paths checked: `wnba_props/shadow/grading.py` and `backtest.py` already keep voids out of W-L — no change needed there.
+- Test: `tests/test_grade_holdout_voids.py`. The grader is force-added from the otherwise-ignored `outputs/hunt/` so the test runs on the VM.
