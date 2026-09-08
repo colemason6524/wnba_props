@@ -11,5 +11,7 @@ outputs/research/
 outputs/health/
 outputs/vm-logs/
 outputs/shadow-vm/
+outputs/*.tar.gz
+outputs/*.zip
 .env
 .DS_Store
