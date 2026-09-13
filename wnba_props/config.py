@@ -118,6 +118,8 @@ class Settings:
     min_display_score: int = 7
     send_discord: bool = False
     discord_webhook_url: str = ""
+    discord_team_webhook_url: str = ""
+    discord_player_webhook_url: str = ""
     discord_min_score: int = 8
     discord_limit: int = 5
     total_context_high: float = 172.0
@@ -183,6 +185,14 @@ def load_settings() -> Settings:
         discord_webhook_url=(
             os.environ.get("WNBA_PROPS_DISCORD_WEBHOOK_URL", "").strip()
             or os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
+        ),
+        discord_team_webhook_url=(
+            os.environ.get("WNBA_PROPS_TEAM_DISCORD_WEBHOOK_URL", "").strip()
+            or os.environ.get("WNBA_TEAM_DISCORD_WEBHOOK_URL", "").strip()
+        ),
+        discord_player_webhook_url=(
+            os.environ.get("WNBA_PROPS_PLAYER_DISCORD_WEBHOOK_URL", "").strip()
+            or os.environ.get("WNBA_PLAYER_DISCORD_WEBHOOK_URL", "").strip()
         ),
         discord_min_score=int(os.environ.get("DISCORD_MIN_SCORE", "8")),
         discord_limit=int(os.environ.get("DISCORD_LIMIT", "5")),

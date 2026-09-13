@@ -1,0 +1,12 @@
+[Unit]
+Description=Schedule WNBA forecast grading
+
+[Timer]
+OnCalendar=*-*-* 06:17:00 America/Detroit
+AccuracySec=1s
+RandomizedDelaySec=0
+Persistent=true
+Unit=sports-wnba-forecast-grade.service
+
+[Install]
+WantedBy=timers.target

@@ -10,7 +10,50 @@ Numbers-first daily WNBA prop screener for common player prop markets. The goal 
 - [`docs/shadow_projection_v1.md`](docs/shadow_projection_v1.md) documents the isolated PTS challenger.
 - [`docs/new_agent_prompt.md`](docs/new_agent_prompt.md) contains a copy-ready introduction for a new conversation.
 
-As of September 8, 2026, production runs on a lightweight Azure VM via systemd user timers (daily board 10:56 ET, shadow capture hourly 10:00–22:00 ET, shadow grade 06:17 ET), with the Mac as the primary working copy and bulk store. The Windows box is retired. The isolated shadow v1 completed its prospective collection and was formally rejected for promotion; shadow v2 collects prospectively from a frozen worktree on the VM. See `docs/v1_evaluation.md` and the canonical handoff before interpreting timer status or changing anything.
+As of September 12, 2026, production is migrating to a **prediction-first forecast board** (`run_forecast_pipeline.py`): the model projects moneylines, spreads, totals and player props before any price is attached, then prices are used only for value classification and flat-unit ROI grading. Bovada is the primary game-market source, Polymarket is the fallback reference, and PlayerProps.ai supplies player lines. The legacy heuristic screener (`run_nightly.py`) is deprecated and its timers are disabled.
+
+## Forecast board (prediction-first)
+
+Two runs per day cover early-afternoon and evening tip-offs. The later slot
+supersedes the earlier pending line, so each play is logged and graded once.
+
+```bash
+# Afternoon board (early games)
+python3 run_forecast_pipeline.py --slot afternoon --send-discord
+
+# Evening board (majority of games; refreshes lines)
+python3 run_forecast_pipeline.py --slot evening --send-discord
+
+# Grade a completed board and post the recap
+python3 grade_forecast_board.py --date 2026-09-17 --send-discord
+```
+
+Board publication fails closed: if game-market coverage, player coverage, or
+priced-row minimums fall below the configured thresholds in
+`wnba_props/config.py`, the board is marked `degraded` and Discord is blocked.
+
+Discord output can be split across two channels for readability by setting
+`WNBA_PROPS_TEAM_DISCORD_WEBHOOK_URL` (moneyline/spread/totals) and
+`WNBA_PROPS_PLAYER_DISCORD_WEBHOOK_URL` (PTS/REB/AST/3PM). If either is unset,
+the single `WNBA_PROPS_DISCORD_WEBHOOK_URL` is used for all sections.
+
+Model artifacts are fitted offline and loaded as frozen production inputs:
+
+```bash
+python3 scripts/fit_game_engine.py            # winner / margin / total
+python3 scripts/fit_props_engine.py           # PTS/REB/AST/3PM residual + calibration
+```
+
+A missing or invalid artifact fails the run (see `wnba_props/modeling/registry.py`).
+Outputs: `outputs/forecast_boards/`, `outputs/ledger/forecast_ledger.jsonl`,
+`outputs/history/game_markets_*.json`, `outputs/grades/`.
+
+## Legacy screener (deprecated)
+
+The commands below document the retired heuristic screener. Its systemd timers
+(`sports-wnba-daily`, `sports-wnba-shadow-capture`, `sports-wnba-shadow-grade`)
+are disabled; do not re-enable them. See
+[`scripts/systemd/README.md`](scripts/systemd/README.md).
 
 ## Current project state
 
@@ -18,7 +61,6 @@ As of September 8, 2026, production runs on a lightweight Azure VM via systemd u
 - Default daily flow is operational: ESPN slate, PlayerProps.ai line values, Basketball-Reference/ESPN logs, ESPN injuries and odds context, terminal board, JSON history export, and optional Discord notification.
 - Azure VM systemd user timers are the primary deployment target (`scripts/run_linux_task.sh` + `~/.config/systemd/user/sports-wnba-*.timer`). The Windows Task Scheduler wrapper remains in `scripts/` for reference only.
 - Pull VM runtime outputs to the Mac with `scripts/sync_from_vm.sh` (history, health, logs, shadow outputs; pull-only, secrets never move).
-- The model is intentionally still close to the NBA-style heuristic model. Feature engineering and WNBA-specific model tuning are future work, not current behavior.
 - Saved caches, logs, history exports, and backtest reports are local runtime artifacts under `.cache/` and `outputs/`; they are intentionally ignored by git.
 
 ## Current stack

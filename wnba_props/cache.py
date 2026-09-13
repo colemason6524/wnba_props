@@ -41,6 +41,15 @@ class JsonCache:
     def get_payload(self, key: str) -> dict[str, Any] | None:
         return self._read_payload(key)
 
+    def saved_at(self, key: str) -> datetime | None:
+        payload = self._read_payload(key)
+        if payload is None or "saved_at" not in payload:
+            return None
+        try:
+            return datetime.fromisoformat(payload["saved_at"])
+        except (TypeError, ValueError):
+            return None
+
     def set(self, key: str, data: Any) -> None:
         path = self._path(key)
         payload = {

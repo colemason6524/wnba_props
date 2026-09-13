@@ -1,0 +1,10 @@
+[Unit]
+Description=WNBA forecast board grading + recap
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=%h/wnba_props/scripts/run_linux_task.sh
+
+[Service]
+Type=oneshot
+ExecStart=%h/wnba_props/scripts/run_linux_task.sh forecast-grade
+TimeoutStartSec=infinity

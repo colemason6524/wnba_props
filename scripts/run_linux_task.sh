@@ -28,7 +28,34 @@ if [[ ! -x "$PYTHON_EXE" ]]; then
 fi
 
 case "$TASK" in
+    forecast)
+        # Prediction-first forecast board. Bovada primary game markets,
+        # Polymarket fallback, PlayerProps player lines, versioned artifacts.
+        LOG_FILE="$LOG_DIR/wnba_forecast.log"
+        TIMEOUT=90m
+        FORECAST_SLOT=${WNBA_FORECAST_SLOT:-evening}
+        COMMAND=("$PYTHON_EXE" run_forecast_pipeline.py --slot "$FORECAST_SLOT")
+        if [[ "${WNBA_SEND_DISCORD:-true}" != "false" ]]; then
+            COMMAND+=(--send-discord)
+            REQUIRED_SECRET=WNBA_PROPS_DISCORD_WEBHOOK_URL
+        else
+            REQUIRED_SECRET=
+        fi
+        ;;
+    forecast-grade)
+        LOG_FILE="$LOG_DIR/wnba_forecast_grade.log"
+        TIMEOUT=30m
+        COMMAND=("$PYTHON_EXE" grade_forecast_board.py)
+        if [[ "${WNBA_SEND_DISCORD:-true}" != "false" ]]; then
+            COMMAND+=(--send-discord)
+            REQUIRED_SECRET=WNBA_PROPS_DISCORD_WEBHOOK_URL
+        else
+            REQUIRED_SECRET=
+        fi
+        ;;
     daily)
+        # DEPRECATED legacy heuristic screener. Kept for rollback only; not
+        # scheduled once the forecast timers are enabled.
         LOG_FILE="$LOG_DIR/wnba_props_task.log"
         TIMEOUT=90m
         export LINE_SOURCE=${LINE_SOURCE:-playerprops}
@@ -40,12 +67,14 @@ case "$TASK" in
         REQUIRED_SECRET=WNBA_PROPS_DISCORD_WEBHOOK_URL
         ;;
     shadow-capture)
+        # DEPRECATED legacy shadow capture. Rollback only.
         LOG_FILE="$LOG_DIR/wnba_shadow_capture.log"
         TIMEOUT=90m
         COMMAND=("$PYTHON_EXE" run_projection_shadow.py)
         REQUIRED_SECRET=
         ;;
     shadow-grade)
+        # DEPRECATED legacy shadow grading. Rollback only.
         LOG_FILE="$LOG_DIR/wnba_shadow_grade.log"
         TIMEOUT=30m
         COMMAND=("$PYTHON_EXE" grade_projection_shadow.py --all-pending)

@@ -41,6 +41,8 @@ class PlayerPropsSource:
         self.lines_cache = lines_cache
         self.failures: list[str] = []
         self.diagnostics: dict[str, object] = {}
+        self._payload_timestamp: datetime | None = None
+        self._payload_from_cache = False
 
     def fetch_prop_lines(self, games: Iterable[Game]) -> list[PropLine]:
         games = list(games)
@@ -55,6 +57,10 @@ class PlayerPropsSource:
             "lines_found": 0,
         }
         payload = self._fetch_payload()
+        self.diagnostics["payload_from_cache"] = self._payload_from_cache
+        self.diagnostics["payload_timestamp"] = (
+            self._payload_timestamp.isoformat() if self._payload_timestamp else None
+        )
         events = payload.get("eventPredictions", []) if isinstance(payload, dict) else []
         self.diagnostics["payload_events"] = len(events)
         if not events:
@@ -63,7 +69,7 @@ class PlayerPropsSource:
 
         games_by_pair = {frozenset((game.home_team, game.away_team)): game for game in games}
         lines: list[PropLine] = []
-        collected_at = datetime.now(timezone.utc)
+        collected_at = self._payload_timestamp or datetime.now(timezone.utc)
         for event in events:
             event_teams = [self._normalize_team(team) for team in event.get("teams", [])]
             if len(event_teams) >= 2:
@@ -139,6 +145,8 @@ class PlayerPropsSource:
         cache_key = f"playerprops_wnba_{self.settings.screen_date.isoformat()}"
         cached = self.lines_cache.get(cache_key)
         if cached is not None:
+            self._payload_timestamp = self.lines_cache.saved_at(cache_key)
+            self._payload_from_cache = True
             return cached
 
         date_from, date_to = self._utc_window()
@@ -152,6 +160,8 @@ class PlayerPropsSource:
         )
         payload = fetch_json(f"{self.BASE_URL}?{params}", headers={"Accept": "application/json"}, timeout=30)
         self.lines_cache.set(cache_key, payload)
+        self._payload_timestamp = self.lines_cache.saved_at(cache_key)
+        self._payload_from_cache = False
         return payload
 
     def _utc_window(self) -> tuple[str, str]:

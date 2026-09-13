@@ -11,6 +11,9 @@ outputs/research/
 outputs/health/
 outputs/vm-logs/
 outputs/shadow-vm/
+outputs/forecast_boards/
+outputs/grades/
+outputs/ledger/
 outputs/*.tar.gz
 outputs/*.zip
 .env
