@@ -27,10 +27,15 @@ pull() {
 pull "$VM_WNBA/outputs/history/" "$REPO_ROOT/outputs/history/"
 pull "$VM_WNBA/outputs/health/" "$REPO_ROOT/outputs/health/"
 pull "$VM_WNBA/outputs/logs/" "$REPO_ROOT/outputs/vm-logs/"
+pull "$VM_WNBA/outputs/forecast_boards/" "$REPO_ROOT/outputs/forecast_boards/"
+pull "$VM_WNBA/outputs/ledger/" "$REPO_ROOT/outputs/ledger/"
+pull "$VM_WNBA/outputs/grades/" "$REPO_ROOT/outputs/grades/"
 pull "$VM_SHADOW/outputs/" "$REPO_ROOT/outputs/shadow-vm/"
 
-printf 'Sync complete: history=%s health=%s vm-logs=%s shadow-vm=%s\n' \
+printf 'Sync complete: history=%s health=%s vm-logs=%s boards=%s grades=%s shadow-vm=%s\n' \
     "$(find "$REPO_ROOT/outputs/history" -name '*.json' 2>/dev/null | wc -l | tr -d ' ')" \
     "$(find "$REPO_ROOT/outputs/health" -name '*.jsonl' 2>/dev/null | wc -l | tr -d ' ')" \
     "$(find "$REPO_ROOT/outputs/vm-logs" -type f 2>/dev/null | wc -l | tr -d ' ')" \
+    "$(find "$REPO_ROOT/outputs/forecast_boards" -name '*.json' 2>/dev/null | wc -l | tr -d ' ')" \
+    "$(find "$REPO_ROOT/outputs/grades" -name '*.json' 2>/dev/null | wc -l | tr -d ' ')" \
     "$(find "$REPO_ROOT/outputs/shadow-vm" -type f 2>/dev/null | wc -l | tr -d ' ')"
