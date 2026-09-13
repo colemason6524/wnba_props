@@ -234,6 +234,38 @@ class StaleMarketTests(unittest.TestCase):
         self.assertIsNone(snapshot.spread)
         self.assertIsNone(snapshot.total)
 
+    def test_bovada_failure_falls_back_to_polymarket(self) -> None:
+        from unittest.mock import patch
+
+        ref = {
+            "away": "CON",
+            "home": "ATL",
+            "start_time_utc": "2026-09-17T23:30:00Z",
+            "moneyline": {
+                "ATL": {"decimal": 1.07},
+                "CON": {"decimal": 8.5},
+            },
+            "total": {"line": 169.5, "over_decimal": 1.9, "under_decimal": 1.9},
+            "spread": {
+                "line": -14.5,
+                "home_decimal": 1.9,
+                "away_decimal": 1.9,
+            },
+        }
+        with patch(
+            "wnba_props.game_markets.fetch_bovada_games",
+            side_effect=RuntimeError("bovada 302"),
+        ), patch(
+            "wnba_props.game_markets.fetch_wnba_references",
+            return_value=({("CON", "ATL"): ref}, {"source": "polymarket"}),
+        ):
+            snapshots, out = fetch_game_markets(screen_date=date(2026, 9, 17))
+        self.assertEqual(out["bovada_error"], "bovada 302")
+        self.assertTrue(out["polymarket_primary"])
+        snapshot = snapshots[("CON", "ATL")]
+        self.assertEqual(snapshot.moneyline_source, "polymarket")
+        self.assertEqual(snapshot.total_source, "polymarket")
+
 
 if __name__ == "__main__":
     unittest.main()

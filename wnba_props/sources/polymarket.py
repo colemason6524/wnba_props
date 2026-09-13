@@ -131,9 +131,15 @@ def _parse_event(event: dict) -> Optional[dict]:
 
     if not moneyline and best_total is None and spread is None:
         return None
+    start_iso = (
+        event.get("startTime")
+        or event.get("gameStartTime")
+        or event.get("endDate")
+    )
     return {
         "away": away,
         "home": home,
+        "start_time_utc": str(start_iso) if start_iso else None,
         "moneyline": moneyline or None,
         "total": best_total,
         "spread": spread,

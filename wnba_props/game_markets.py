@@ -141,7 +141,7 @@ def polymarket_quote(ref: dict) -> MarketQuote:
         source=SOURCE_POLYMARKET,
         away=ref["away"],
         home=ref["home"],
-        start_time_utc=None,
+        start_time_utc=ref.get("start_time_utc"),
         moneyline=moneyline,
         spread=spread,
         total=total,
@@ -259,9 +259,15 @@ def fetch_game_markets(
         "coverage": {},
         "unmatched_bovada": [],
         "bovada_stale": False,
+        "bovada_error": None,
+        "polymarket_primary": False,
     }
 
-    bovada_games, bovada_diags = fetch_bovada_games(cache_dir=cache_dir, refresh=refresh)
+    try:
+        bovada_games, bovada_diags = fetch_bovada_games(cache_dir=cache_dir, refresh=refresh)
+    except Exception as exc:  # noqa: BLE001 - secondary source keeps the board alive
+        bovada_games, bovada_diags = [], {"source": "bovada", "error": str(exc)}
+        diagnostics["bovada_error"] = str(exc)
     diagnostics["bovada"] = bovada_diags
     bovada_games = [g for g in bovada_games if _et_date(g.start_time_utc) == screen_date]
 
@@ -280,10 +286,19 @@ def fetch_game_markets(
         poly_refs, poly_diags = fetch_wnba_references()
     except Exception as exc:  # noqa: BLE001 - secondary source never blocks
         poly_refs, poly_diags = {}, {"source": "polymarket", "error": str(exc)}
+    poly_refs = {
+        key: ref
+        for key, ref in poly_refs.items()
+        if _et_date(ref.get("start_time_utc")) in (None, screen_date)
+    }
     diagnostics["polymarket"] = poly_diags
 
     snapshots: Dict[Tuple[str, str], MarketSnapshot] = {}
     unmatched: List[str] = []
+    if not bovada_games and poly_refs:
+        diagnostics["polymarket_primary"] = True
+        for key, ref in poly_refs.items():
+            snapshots[key] = build_snapshot(polymarket_quote(ref), None)
     for game in bovada_games:
         primary = bovada_quote(game)
         cross_ref = poly_refs.get((game.away, game.home))

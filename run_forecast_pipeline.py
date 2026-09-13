@@ -240,6 +240,8 @@ def run_pipeline(
         "league_baselines": {k: round(v, 3) for k, v in league_baselines.items()},
         "stale_prop_lines_dropped": dropped_stale,
         "game_markets_stale": bool(market_diags.get("bovada_stale")),
+        "game_markets_bovada_error": market_diags.get("bovada_error"),
+        "game_markets_polymarket_primary": bool(market_diags.get("polymarket_primary")),
     }
     board = build_daily_board(
         screen_date=screen,
