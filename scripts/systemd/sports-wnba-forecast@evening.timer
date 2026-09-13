@@ -2,7 +2,7 @@
 Description=Schedule WNBA evening forecast board (majority of games)
 
 [Timer]
-OnCalendar=*-*-* 19:15:00 America/Detroit
+OnCalendar=*-*-* 18:45:00 America/Detroit
 AccuracySec=1s
 RandomizedDelaySec=0
 Persistent=true

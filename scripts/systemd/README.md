@@ -8,14 +8,14 @@ if you change a unit on the VM, copy it back here, and vice versa.
 
 | Unit | Schedule (America/Detroit) | Command |
 | --- | --- | --- |
-| `sports-wnba-forecast@afternoon.timer` | daily 15:15 | `run_forecast_pipeline.py --slot afternoon --send-discord` |
-| `sports-wnba-forecast@evening.timer` | daily 19:15 | `run_forecast_pipeline.py --slot evening --send-discord` |
+| `sports-wnba-forecast@afternoon.timer` | weekends, random 10:00–13:00 | `run_forecast_pipeline.py --slot afternoon --send-discord` |
+| `sports-wnba-forecast@evening.timer` | daily 18:45 | `run_forecast_pipeline.py --slot evening --send-discord` |
 | `sports-wnba-forecast-grade.timer` | daily 06:17 | `grade_forecast_board.py --send-discord` |
 
-Two forecast runs cover both early-afternoon and evening tip-offs. The ledger
-supersedes the earlier slot's pending line with the later snapshot, so the same
-play is graded once. The afternoon timer is first; the evening run refreshes
-lines as news lands.
+The afternoon run covers weekend early tip-offs and fires once at a random
+time between 10:00 and 13:00 ET (weekends only). The evening run is daily at
+18:45 ET. The ledger supersedes the earlier slot's pending line with the later
+snapshot, so the same play is graded once.
 
 The forecast pipeline collects Bovada game markets (primary), Polymarket
 (fallback reference), PlayerProps player lines, point-in-time player logs and

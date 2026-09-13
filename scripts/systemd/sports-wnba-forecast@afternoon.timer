@@ -1,10 +1,10 @@
 [Unit]
-Description=Schedule WNBA afternoon forecast board (early games)
+Description=Schedule WNBA weekend early forecast board (random before 13:00)
 
 [Timer]
-OnCalendar=*-*-* 15:15:00 America/Detroit
+OnCalendar=Sat,Sun *-*-* 10:00:00 America/Detroit
+RandomizedDelaySec=10800
 AccuracySec=1s
-RandomizedDelaySec=0
 Persistent=true
 Unit=sports-wnba-forecast@afternoon.service
 
