@@ -15,8 +15,9 @@ As of September 12, 2026, production is migrating to a **prediction-first foreca
 ## Forecast board (prediction-first)
 
 The evening run builds the board daily at 18:45 ET. A weekend-only early run
-fires at a random time between 10:00 and 13:00 ET for early tip-offs. The later
-slot supersedes the earlier pending line, so each play is logged and graded once.
+fires weekends at 12:36 ET (off-peak) for early tip-offs. The later slot
+supersedes the earlier pending line, so each play is logged and graded once.
+The grader runs the next morning and defaults to the prior calendar day.
 
 ```bash
 # Afternoon board (early games)

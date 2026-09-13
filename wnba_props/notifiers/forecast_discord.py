@@ -45,11 +45,14 @@ def render_board(
     screen_date: str,
     slot_label: str = "",
     title: str = "WNBA Forecast Board",
+    source_note: str = "",
 ) -> str:
     header = f"{title} - {screen_date}"
     if slot_label:
         header += f" ({slot_label})"
     lines = [header]
+    if source_note:
+        lines.append(source_note)
 
     for section in SECTION_ORDER:
         rows = list(sections.get(section, []))
@@ -143,6 +146,7 @@ def send_board(
     slot: str = "",
     slot_label: str = "",
     title: str = "WNBA Forecast Board",
+    source_note: str = "",
     delivery_ledger: Optional[Path] = None,
     force_send: bool = False,
     retries: int = 3,
@@ -153,7 +157,11 @@ def send_board(
             return [DiscordResult(ok=False, error="duplicate_board_suppressed")]
 
     text = render_board(
-        sections, screen_date=screen_date, slot_label=slot_label, title=title
+        sections,
+        screen_date=screen_date,
+        slot_label=slot_label,
+        title=title,
+        source_note=source_note,
     )
     chunks = chunk_message(text)
     results: list[DiscordResult] = []
@@ -210,4 +218,32 @@ def send_recap(
     username: str = "WNBA Forecast",
 ) -> DiscordResult:
     text = render_recap(screen_date, summary)
+    return _send_with_retry(webhook_url, text, retries, username)
+
+
+def render_health_alert(screen_date: str, slot: str, health: dict) -> str:
+    header = f"WNBA Forecast DEGRADED - {screen_date}"
+    if slot:
+        header += f" ({slot.title()})"
+    lines = [header, "Board withheld (coverage gate failed)."]
+    for reason in (health.get("reasons") or [])[:10]:
+        lines.append(f"- {reason}")
+    lines.append(
+        f"coverage: markets {health.get('games_with_markets', '?')}/"
+        f"{health.get('slate_games', '?')} | priced {health.get('priced_rows', '?')} | "
+        f"lines {health.get('evaluated_lines', '?')}"
+    )
+    return "\n".join(lines)
+
+
+def send_health_alert(
+    webhook_url: str,
+    *,
+    screen_date: str,
+    slot: str = "",
+    health: dict,
+    retries: int = 3,
+    username: str = "WNBA Forecast",
+) -> DiscordResult:
+    text = render_health_alert(screen_date, slot, health)
     return _send_with_retry(webhook_url, text, retries, username)

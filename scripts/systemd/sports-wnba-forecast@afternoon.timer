@@ -1,10 +1,10 @@
 [Unit]
-Description=Schedule WNBA weekend early forecast board (random before 13:00)
+Description=Schedule WNBA weekend early forecast board (off-peak)
 
 [Timer]
-OnCalendar=Sat,Sun *-*-* 10:00:00 America/Detroit
-RandomizedDelaySec=10800
+OnCalendar=Sat,Sun *-*-* 12:36:00 America/Detroit
 AccuracySec=1s
+RandomizedDelaySec=0
 Persistent=true
 Unit=sports-wnba-forecast@afternoon.service
 

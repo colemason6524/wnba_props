@@ -42,6 +42,7 @@ from wnba_props.notifiers.forecast_discord import (
     _has_rows,
     chunk_message,
     render_board,
+    render_health_alert,
     split_sections,
 )
 
@@ -262,6 +263,35 @@ class BoardTests(unittest.TestCase):
         text = render_board(player, screen_date="2026-06-01", title="WNBA Player Props")
         self.assertIn("WNBA Player Props", text)
         self.assertNotIn("== Moneyline", text)
+
+    def test_source_note_rendered(self) -> None:
+        board = assemble_board(
+            screen_date="2026-06-01",
+            run_id="run-1",
+            prop_forecasts=[_prop_forecast()],
+        )
+        text = render_board(
+            board.sections,
+            screen_date="2026-06-01",
+            source_note="Game prices: Polymarket reference",
+        )
+        self.assertIn("Game prices: Polymarket reference", text)
+
+    def test_render_health_alert_lists_reasons(self) -> None:
+        text = render_health_alert(
+            "2026-06-01",
+            "evening",
+            {
+                "reasons": ["game-market coverage 3/5 (60%) below minimum 100%"],
+                "games_with_markets": 3,
+                "slate_games": 5,
+                "priced_rows": 40,
+                "evaluated_lines": 50,
+            },
+        )
+        self.assertIn("DEGRADED", text)
+        self.assertIn("game-market coverage", text)
+        self.assertIn("markets 3/5", text)
 
 
 class HealthTests(unittest.TestCase):

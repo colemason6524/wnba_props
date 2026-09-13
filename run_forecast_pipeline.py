@@ -34,6 +34,7 @@ from wnba_props.modeling.registry import ArtifactError, code_commit, load_artifa
 from wnba_props.notifiers.forecast_discord import (
     _has_rows,
     send_board,
+    send_health_alert,
     split_sections,
 )
 from wnba_props.sources.basketball_reference import BasketballReferenceSource
@@ -285,8 +286,20 @@ def run_pipeline(
     )
 
     if send_discord:
+        webhook = webhook_url or settings.discord_webhook_url
         if health["status"] != "ok":
             print(f"[pipeline] discord BLOCKED: {health['reasons']}", file=sys.stderr)
+            if webhook:
+                alert = send_health_alert(
+                    webhook,
+                    screen_date=screen,
+                    slot=slot,
+                    health=health,
+                )
+                if alert.ok:
+                    print("[pipeline] discord health alert sent")
+                else:
+                    print("[pipeline] discord health alert failed", file=sys.stderr)
             return 0
         results = _send_discord(
             board,
@@ -322,6 +335,14 @@ def _send_discord(
     primary = webhook_url or settings.discord_webhook_url
     team_hook = settings.discord_team_webhook_url or primary
     player_hook = settings.discord_player_webhook_url or primary
+
+    provenance = board.provenance or {}
+    source_note = ""
+    if provenance.get("game_markets_polymarket_primary"):
+        source_note = "Game prices: Polymarket reference"
+    elif provenance.get("game_markets_stale"):
+        source_note = "Warning: stale game prices (fallback cache)"
+
     if not (settings.discord_team_webhook_url or settings.discord_player_webhook_url):
         return send_board(
             primary,
@@ -329,6 +350,7 @@ def _send_discord(
             screen_date=screen,
             slot=slot,
             slot_label=slot.title(),
+            source_note=source_note,
             delivery_ledger=DISCORD_LEDGER,
             force_send=force_send,
         )
@@ -343,6 +365,7 @@ def _send_discord(
                 slot=f"{slot}:team",
                 slot_label=slot.title(),
                 title="WNBA Team Board",
+                source_note=source_note,
                 delivery_ledger=DISCORD_LEDGER,
                 force_send=force_send,
             )
@@ -356,6 +379,7 @@ def _send_discord(
                 slot=f"{slot}:props",
                 slot_label=slot.title(),
                 title="WNBA Player Props",
+                source_note=source_note,
                 delivery_ledger=DISCORD_LEDGER,
                 force_send=force_send,
             )

@@ -12,7 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -231,7 +231,7 @@ def grade_date(
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Grade a WNBA forecast board.")
-    parser.add_argument("--date", default=None, help="Screen date YYYY-MM-DD; defaults to today.")
+    parser.add_argument("--date", default=None, help="Screen date YYYY-MM-DD; defaults to yesterday.")
     parser.add_argument("--send-discord", action="store_true")
     parser.add_argument("--webhook-url", default=None)
     return parser.parse_args(argv)
@@ -239,7 +239,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    screen = date.fromisoformat(args.date) if args.date else date.today()
+    if args.date:
+        screen = date.fromisoformat(args.date)
+    else:
+        screen = date.today() - timedelta(days=1)
     return grade_date(screen, send_discord=args.send_discord, webhook_url=args.webhook_url)
 
 
