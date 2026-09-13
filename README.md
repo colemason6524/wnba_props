@@ -59,9 +59,9 @@ are disabled; do not re-enable them. See
 
 ## Current project state
 
-- Independent repo: primary working copy and bulk store on macOS at `/Users/colemason/Documents/wnba_props`; always-on runner is a lightweight Azure VM (`~/wnba_props` on `main`, plus a `~/wnba_props_shadow` worktree of `codex/wnba-shadow-v2`). The Windows box (`C:\Users\muski\wnba_props`) is retired as of September 2026.
+- Independent repo: primary working copy and bulk store on macOS at `/Users/colemason/Documents/wnba_props`; the always-on runner is a lightweight Azure VM (`~/wnba_props` on `main`).
 - Default daily flow is operational: ESPN slate, PlayerProps.ai line values, Basketball-Reference/ESPN logs, ESPN injuries and odds context, terminal board, JSON history export, and optional Discord notification.
-- Azure VM systemd user timers are the primary deployment target (`scripts/run_linux_task.sh` + `~/.config/systemd/user/sports-wnba-*.timer`). The Windows Task Scheduler wrapper remains in `scripts/` for reference only.
+- Azure VM systemd user timers are the only deployment target (`scripts/run_linux_task.sh` + `~/.config/systemd/user/sports-wnba-*.timer`). There is no Windows or macOS scheduler.
 - Pull VM runtime outputs to the Mac with `scripts/sync_from_vm.sh` (history, health, logs, shadow outputs; pull-only, secrets never move).
 - Saved caches, logs, history exports, and backtest reports are local runtime artifacts under `.cache/` and `outputs/`; they are intentionally ignored by git.
 
@@ -191,148 +191,32 @@ If Discord says there are no plays, use the full-board command to distinguish be
 - **WNBA-specific Discord webhook variable:** use `WNBA_PROPS_DISCORD_WEBHOOK_URL` so this project does not hijack MLB tasks that may already use `DISCORD_WEBHOOK_URL`.
 - **Pregame-only by default:** `PREGAME_ONLY=true` drops games that have already started. Late-day manual runs may show a smaller slate or no eligible games.
 - **Regular-season log freshness allows league breaks:** `REGULAR_SEASON_LOG_STALE_DAYS=21` prevents the board from zeroing out after WNBA breaks, including the multi-week World Cup pause. Playoff freshness remains tighter by default with `PLAYOFF_LOG_STALE_DAYS=2`.
-- **PowerShell wrapper avoids native stderr failure:** Python progress messages are written to stderr. The Windows task wrapper captures stdout/stderr through `Start-Process` temp files so normal progress output does not become a PowerShell `NativeCommandError`.
 
 ## Daily Automation
 
 The project is ready for daily collection once the normal run completes and writes a history file.
 
-### Linux (Azure VM) systemd timers — primary
+### Linux (Azure VM) systemd timers — only deployment target
 
-On the VM, `scripts/run_linux_task.sh` runs the three jobs with a shared
+On the VM, `scripts/run_linux_task.sh` runs the forecast jobs with a shared
 flock lock, per-task logs under `outputs/logs/`, and timeouts. Secrets live
-in `~/.config/wnba_props/env` (mode 600, never synced). The user timers are
-`~/.config/systemd/user/sports-wnba-daily.timer` (daily 10:56 ET),
-`sports-wnba-shadow-capture.timer` (hourly 10:00–22:00 ET), and
-`sports-wnba-shadow-grade.timer` (06:17 ET); the shadow services run from the
-`~/wnba_props_shadow` v2 worktree via `PROJECT_DIR`/`WNBA_PROPS_PYTHON_EXE`
-overrides while sharing the main checkout's venv and lock.
+in `~/.config/wnba_props/env` (mode 600, never synced). See
+[`scripts/systemd/README.md`](scripts/systemd/README.md) for the active unit
+table. In short:
+
+- `sports-wnba-forecast@afternoon.timer` — Sat/Sun 12:36 ET
+- `sports-wnba-forecast@evening.timer` — daily 18:45 ET
+- `sports-wnba-forecast-grade.timer` — daily 06:17 ET (grades yesterday)
+
+The legacy `sports-wnba-daily`, `sports-wnba-shadow-capture`, and
+`sports-wnba-shadow-grade` timers are disabled and must not be re-enabled.
 
 After changing a unit file: `systemctl --user daemon-reload`. Check status
 with `systemctl --user list-timers` and per-task logs in `outputs/logs/`.
 The VM checkout must stay on a clean `main` or scheduled Discord is blocked
 by `WNBA_REQUIRE_CLEAN_TREE`.
 
-### Windows Task Scheduler (forecast pipeline)
-
-The Windows desktop can run the prediction-first forecast pipeline. This is
-useful when the Azure VM cannot reach Bovada (datacenter IPs get a 302 redirect
-loop), because a residential connection can pull live Bovada prices.
-
-From an elevated PowerShell on the Windows box:
-
-```powershell
-cd C:\Users\muski\wnba_props
-git pull --ff-only origin main
-powershell -ExecutionPolicy Bypass -File scripts\setup_windows_forecast_tasks.ps1
-```
-
-That registers three interactive tasks and disables the legacy ones:
-
-| Task | Schedule (local) | Runs |
-| --- | --- | --- |
-| `WNBA Forecast Weekend` | Sat/Sun 12:36 | `run_forecast_pipeline.py --slot afternoon --send-discord` |
-| `WNBA Forecast Daily` | daily 18:45 | `run_forecast_pipeline.py --slot evening --send-discord` |
-| `WNBA Forecast Grade` | daily 06:17 | `grade_forecast_board.py --send-discord` (grades yesterday) |
-
-Secrets are read from `%USERPROFILE%\.config\wnba_props\env` (KEY=VALUE per
-line). At minimum set:
-
-```text
-WNBA_PROPS_DISCORD_WEBHOOK_URL=...
-```
-
-The wrapper logs to `outputs\logs\wnba_forecast.log` and
-`outputs\logs\wnba_forecast_grade.log`. Test manually before trusting the
-schedule:
-
-```powershell
-.\scripts\run_wnba_forecast_task.ps1 -ProjectDir "C:\Users\muski\wnba_props" -Slot evening -NoDiscord
-.\scripts\run_wnba_forecast_grade_task.ps1 -ProjectDir "C:\Users\muski\wnba_props" -NoDiscord
-```
-
-Windows uses the legacy daily screen (below) only for rollback.
-
-### Windows legacy screener (retired September 2026)
-
-After cloning the repo on Windows, test the exact scheduled command manually from PowerShell:
-
-```powershell
-cd C:\Users\muski\wnba_props
-.\scripts\run_wnba_props_task.ps1 -ProjectDir "C:\Users\muski\wnba_props" -PythonExe "python"
-```
-
-That appends terminal output to:
-
-```powershell
-outputs\logs\wnba_props_task.log
-```
-
-Every successful nightly screen writes the backtest-ready JSON snapshot to:
-
-```powershell
-outputs\history\
-```
-
-Store the Discord webhook once for the Windows user that runs the scheduled task:
-
-```powershell
-setx WNBA_PROPS_DISCORD_WEBHOOK_URL "your_discord_webhook_url"
-```
-
-Open a new PowerShell window after `setx` before testing. The scheduled wrapper opts into Discord with `SEND_DISCORD=true`; if the webhook is missing, the run still completes and logs a notification failure. `DISCORD_WEBHOOK_URL` is still supported as a fallback for manual runs, but the WNBA-specific variable avoids interfering with MLB tasks that may use the generic name.
-
-Task Scheduler setup:
-
-- Program/script: `C:\Users\muski\wnba_props\scripts\run_wnba_props_task.cmd`
-- Start in: `C:\Users\muski\wnba_props`
-- Schedule: daily, pregame window such as 11:00 AM local time
-
-PowerShell setup from the terminal:
-
-```powershell
-$Action = New-ScheduledTaskAction `
-  -Execute "$env:ComSpec" `
-  -Argument '/c "C:\Users\muski\wnba_props\scripts\run_wnba_props_task.cmd"' `
-  -WorkingDirectory "C:\Users\muski\wnba_props"
-
-$Trigger = New-ScheduledTaskTrigger -Daily -At 11:00AM
-
-$Settings = New-ScheduledTaskSettingsSet `
-  -StartWhenAvailable `
-  -AllowStartIfOnBatteries `
-  -DontStopIfGoingOnBatteries
-
-Register-ScheduledTask `
-  -TaskName "WNBA Props Daily" `
-  -Action $Action `
-  -Trigger $Trigger `
-  -Settings $Settings `
-  -Description "Runs the WNBA props screener daily and logs history snapshots." `
-  -Force
-```
-
-Smoke test the scheduled task:
-
-```powershell
-Start-ScheduledTask -TaskName "WNBA Props Daily"
-Start-Sleep -Seconds 60
-Get-ScheduledTaskInfo -TaskName "WNBA Props Daily"
-Get-Content C:\Users\muski\wnba_props\outputs\logs\wnba_props_cmd_bootstrap.log -Tail 80
-Get-Content C:\Users\muski\wnba_props\outputs\logs\wnba_props_task.log -Tail 80
-```
-
-Expected success signal:
-
-```powershell
-LastTaskResult : 0
-```
-
-and the task log should end with either `Finished WNBA props with exit code 0` or a clear runner-level failure. Old failure entries may remain in the log; evaluate the newest timestamped run.
-
-If the repo is not at `C:\Users\muski\wnba_props`, edit `PROJECT_DIR` in `scripts\run_wnba_props_task.cmd` or pass the correct `-ProjectDir` when testing the PowerShell script.
-
-### macOS launchd (manual use only — not scheduled)
+### macOS wrapper (manual use only — not scheduled)
 
 Test the exact scheduled command manually:
 
@@ -424,15 +308,6 @@ For a slate sanity check:
 SEND_DISCORD=false MIN_DISPLAY_SCORE=0 python3 run_nightly.py
 ```
 
-For Windows task validation:
-
-```powershell
-Start-ScheduledTask -TaskName "WNBA Props Daily"
-Start-Sleep -Seconds 60
-Get-ScheduledTaskInfo -TaskName "WNBA Props Daily"
-Get-Content C:\Users\muski\wnba_props\outputs\logs\wnba_props_task.log -Tail 120
-```
-
 Important summary fields:
 
 - `Players loaded successfully` should be near `Unique players with lines`; if it is zero, inspect skipped player reasons before interpreting the board.
@@ -474,7 +349,6 @@ Important summary fields:
 - `preview_lines.py` only proves line coverage. It does not load stats or prove the model evaluated candidates.
 - `MIN_DISPLAY_SCORE=0` is the safest manual inspection mode because it shows every model-qualified candidate without changing scoring.
 - `SEND_DISCORD=false` should be set for manual investigations to avoid duplicate notifications.
-- `setx` writes future Windows environment variables but does not update the current PowerShell session. Open a new PowerShell window after setting webhook variables.
 - A clean scheduled task can still produce `No eligible WNBA games found` if the run happens after games have started or there is no remaining pregame slate.
 - A first run after a break or cache miss can be slow because Basketball-Reference fetches are rate-limited intentionally.
 

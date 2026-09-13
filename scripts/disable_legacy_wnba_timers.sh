@@ -43,9 +43,4 @@ if [[ -f "$PLIST" ]]; then
 fi
 
 echo ""
-echo "Legacy Windows tasks (verify inactive on any Windows host):"
-echo "  schtasks /Query /TN \"WNBA Props Daily\""
-echo "  schtasks /Query /TN \"WNBA Shadow Capture\""
-echo "  schtasks /Query /TN \"WNBA Shadow Grade\""
-echo ""
 echo "Done. Confirm no legacy timer/service is listed above."

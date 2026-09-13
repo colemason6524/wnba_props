@@ -1,204 +1,100 @@
-# WNBA props project handoff
+# WNBA forecast project handoff
 
-Last verified: 2026-09-08, America/Detroit (previous: 2026-08-31)
+Last verified: 2026-09-12, America/Detroit
 
-## September 8, 2026 topology change (Windows retired, Azure VM primary)
-
-The Windows box became unreliable (wifi drops, missed tasks) and is retired.
-New topology:
+## Current topology (Linux only)
 
 - **Mac** (`/Users/colemason/Documents/wnba_props`, `main`): primary working
-  copy and bulk store (full history, hunt/research data, hard-drive overflow
-  handled separately). No scheduled jobs on the Mac.
-- **Azure VM** (`azureuser@130.131.0.6`, Ubuntu 22.04, ~900MB RAM): lightweight
-  always-on runner. `~/wnba_props` on `main` (production daily), plus
-  `~/wnba_props_shadow` as a git worktree of frozen `codex/wnba-shadow-v2`
-  (shadow capture/grade). Systemd user timers: `sports-wnba-daily`
-  (10:56 ET), `sports-wnba-shadow-capture` (hourly 10:00–22:00 ET; 09:13/23:13
-  removed Sep 8 as dead hours — zero games lost on the Jul–Aug schedule),
-  `sports-wnba-shadow-grade` (06:17 ET). Secrets in
-  `~/.config/wnba_props/env` (mode 600, webhook configured). The tmux
-  scheduler experiment was removed; timers are the mechanism.
-- VM stays lightweight: ~24MB checkout, stdlib-only venv, tiny `.cache`;
-  research bulk lives on the Mac. Pull VM outputs with
-  `scripts/sync_from_vm.sh` (history, health, logs, shadow outputs).
-- Shadow capture on the VM was running rejected v1 from `main`; it now runs
-  frozen v2 from the worktree with an empty evidence gate for the Sep 17
-  resumption.
+  copy and bulk store. No scheduled jobs on the Mac.
+- **Azure VM** (`azureuser@130.131.0.6`, Ubuntu): the only always-on runner.
+  `~/wnba_props` on `main`. Scheduled through systemd **user timers**
+  (`scripts/run_linux_task.sh` + `~/.config/systemd/user/sports-wnba-*.timer`).
+- Secrets live in `~/.config/wnba_props/env` (mode 600), including
+  `WNBA_PROPS_DISCORD_WEBHOOK_URL` and optionally the team/player webhooks.
+- Pull VM outputs to the Mac with `scripts/sync_from_vm.sh` (history, health,
+  logs, forecast boards, ledger, grades; pull-only, secrets never move).
 
-## August 31, 2026 break-sprint record
-
-Executed during the World Cup pause (no games Aug 30–Sep 16). All 77 unit tests pass.
-
-**Gate G1 — August holdout verdict (predeclared protocol in `outputs/hunt/HOLDOUT_PROTOCOL.md`):**
-the exact capped Discord digest policy (score ≥8, suppress `SEASON-`/`TEAM_OUT`, production sort, 5/side cap, flat stake at captured price) graded on Aug 3–30 (25 slates, 110 capped rows, 102 settled, all priced, zero post-tip snapshots):
-
-- Record 53-47-2 (W-L-void; the earlier "53-49 / 51.96%" counted the 2 DNP voids as losses — fixed 2026-09-08), hit rate 53.00%, units -11.15, **ROI -10.94% (slate-clustered CI95 -26.8%..+7.3%)** vs 59.4% break-even hit rate → **no edge; policy left unchanged per protocol**
-- Score is inversely related to ROI (8: +18.3%, 9: -27.7%, 10: -35.7%, 11: -64.6%) — recorded as prospective hypothesis H5, not tuned
-- Suppressed rows hit 81.25% (n=16) — opposite sign of July; treated as noise (H6)
-- Price integrity clean: 0 american/decimal mismatches, mean vig 6.84%, median line lead 510 min
-
-**Production hardening (all with regression tests in `tests/test_safety_guards.py`):**
-point-in-time log filtering (`game_date < SCREEN_DATE`), DNP/zero-minute exclusion, own-player `OUT`/`IR`/`SUSPENDED` hard exclusion, injury-source failure = degraded run, run-health classification (`healthy`/`degraded`/`failed`/`no_slate`) with coverage gates and Discord blocking, atomic history artifact written and validated before Discord (delivery status in `<artifact>.delivery.json` + `outputs/health/run_status.jsonl`), pregame guard dropping started games and stale-line candidates (`MAX_LINE_AGE_MINUTES`), full run provenance (policy version, git commit, dirty flag, config fingerprint) in every snapshot, clean-tree requirement for scheduled Discord, and WNBA-scale total-context thresholds (172/156 replacing NBA 218/232).
-
-**Statistics/research infrastructure:** `wnba_props/stats.py` (slate-clustered bootstrap CIs, paired cluster diffs, LOSO) with tests; snapshot-faithful backtests (post-tip slates excluded, snapshot policy used when present); hypothesis ledger `docs/research/ledger.md`; walk-forward harness `research/walkforward.py` with first diagnostics — recency-weighted minutes beat L5/season (MAE 4.375 vs 4.480/4.642), minutes×rate blend beats points L5 (4.500 vs 4.791), regulars show ~4.6% next-game absence mass (DNP zero-inflation needed in v3).
-
-**Shadow v2 verified for deployment:** `codex/wnba-shadow-v2` @ `f663c49` — all 62 branch tests pass, calibration artifact sha256 matches the documented `da5052ab…` exactly. Deployed to the Windows shadow checkout so prospective v2 collection starts with an empty evidence gate when games resume.
-
-**Ops:** `requirements.txt` (stdlib-only, pin interpreter), GitHub Actions CI (ubuntu+windows, py3.9/3.12, compileall + unittest + PowerShell wrapper parse check).
-
-Read this file before changing code, deployment, model policy, or schedules. The project has two deliberately separate systems: a working production screener and a research-only projection challenger.
-
-## August 28, 2026 evidence note
-
-Verified directly over `ssh windows` and in the local checkout:
-
-- Windows production (`main` at `ca09a11` plus the ESPN HTTP work, since committed) is healthy: scheduled runs exited 0 with Discord sent and history exported daily through `screen_run_20260827T150653Z.json`. A missing August 24 history file corresponds to one off-schedule 22:45 run that appears to have aborted; every scheduled run since has succeeded. Low priority.
-- The 2026 WNBA calendar pauses for the FIBA World Cup from August 30 through September 16; the regular season resumes September 17 and the playoffs start September 27. Production fixes applied for this window:
-  - `REGULAR_SEASON_LOG_STALE_DAYS` default raised 14 → 21 in `run_nightly.py`, because 19-day-old logs on the September 17 resumption would have skipped every player as stale (the same failure documented after a prior break).
-  - `wnba_props/screener.py` `_is_playoff_window` corrected from the NBA window `{4, 5, 6}` to the WNBA window `{9, 10}`, so `PLAYOFF_ROLE`, the 0.65 playoff recent-weight, and playoff score penalties actually engage during the WNBA postseason. Regression tests added in `tests/test_policy.py`.
-- The user-owned uncommitted ESPN HTTP work (browser-safe headers plus curl fallback on 403) was reconciled and committed (`b14a9f6` on `codex/wnba-shadow-collection`, cherry-picked to `main`) and deployed to the Windows production checkout.
-- Shadow status in the table below is superseded by `docs/v1_evaluation.md`: prospective collection demonstrably worked by mid-August (graded slates 08-14 through 08-21), and v1 was formally evaluated and **rejected for promotion**. It remains research-only.
-
-This is the canonical starting point for a new conversation. Read this file before changing code, deployment, model policy, or schedules. The project has two deliberately separate systems: a working production screener and a research-only projection challenger.
-
-## Executive state
-
-| System | Purpose | Current state |
-| --- | --- | --- |
-| Production screener | Create the daily research board, history snapshot, and optional Discord digest | Healthy on Windows as of August 27 |
-| PTS projection shadow | Prospectively test a game/player projection model without changing production | Collected through August 21; v1 formally rejected for promotion (research-only) |
-
-The production system must remain unchanged while the shadow defect is repaired and evidence is collected. No shadow output should be promoted into production based on the current evidence.
-
-## Authoritative locations and Git state
-
-- macOS working copy (primary): `/Users/colemason/Documents/wnba_props`
-- Azure VM production: `~/wnba_props` on `main` (systemd user timers)
-- Azure VM shadow: `~/wnba_props_shadow` worktree of frozen `codex/wnba-shadow-v2`
-- Windows production/shadow (`C:\Users\muski\wnba_props*`): RETIRED September 2026, do not use
-- Windows production branch/commit verified August 10: `main` at `ca09a11`
-- Windows shadow branch/commit verified August 10: `codex/wnba-shadow-collection` at `1aa3a1c`
-
-The local and Windows production checkouts contain uncommitted ESPN HTTP compatibility work in `wnba_props/utils.py`, four ESPN source modules, and `tests/test_espn_http.py`. It adds browser-safe ESPN headers and a curl fallback on HTTP 403. Treat these as active user-owned changes: do not overwrite, discard, or fold them into unrelated work without first reconciling their status.
-
-The local checkout also contains the uncommitted shadow implementation and documentation. The Windows shadow checkout has the initial shadow version committed independently. Runtime artifacts under `.cache/` and `outputs/` are intentionally ignored by Git.
+There is **no Windows or macOS scheduler**. Historical Windows/macOS task
+wrappers have been removed; do not recreate them.
 
 ## Production system
 
-The current flow is:
+Prediction-first forecast board (`run_forecast_pipeline.py`). The model projects
+every market before any price is attached; prices only classify value and grade
+flat-unit ROI.
 
 ```text
-ESPN slate/context/injuries
+ESPN slate + point-in-time logs/injuries
         +
-PlayerProps.ai FanDuel-labeled lines and prices
+Bovada game markets (primary) / Polymarket (fallback reference)
         +
-Basketball-Reference logs with ESPN fallbacks
-        -> heuristic screener
-        -> terminal board + screen_run history
-        -> stricter Discord digest
+PlayerProps.ai player lines
+        -> versioned artifacts (frozen)
+        -> price-independent forecasts
+        -> board + ROI ledger
+        -> Discord (optional) + grading recap
 ```
 
-Production is not a full predictive game model. It is a heuristic filter that emphasizes recent hit patterns, trend, opponent context, minutes/role indicators, availability, and other flags. It scores the line opportunity, not the expected value implied by price. Prices are captured where available for retrospective settlement.
+- **Game model:** logistic winner + ridge margin/total on team form features.
+- **Props:** minutes x rate simulation from joint residual artifacts per
+  PTS/REB/AST/3PM, with league-baseline opponent adjustment.
+- **Artifacts:** `wnba_props/artifacts/`; load failure stops the run
+  (`wnba_props/modeling/registry.py`). Fit with `scripts/fit_game_engine.py`
+  and `scripts/fit_props_engine.py`.
+- **Publication is fail-closed:** coverage gates in `wnba_props/config.py`
+  (`MIN_EVENT_MATCH_RATIO`, `MIN_PLAYER_LOAD_RATIO`, `MIN_EVALUATED_LINES`,
+  `MAX_LINE_AGE_MINUTES`). A degraded board is withheld; Discord receives a
+  DEGRADED alert instead.
+- **Ledger:** one row per `game_date/market/subject`; the later slot supersedes
+  the earlier pending snapshot and settled rows are frozen, so each play grades
+  once.
+- **Grader:** `grade_forecast_board.py` defaults to **yesterday** (the 06:17
+  timer runs the morning after), settles flat units, and posts a recap.
 
-Verified Windows evidence from August 10:
+## Schedule (America/Detroit)
 
-- scheduled task `WNBA Props Daily` ran at 11:00:01 a.m. and returned 0;
-- 19 of 19 unique players loaded successfully;
-- 59 prop lines were evaluated, 15 qualified, and 6 displayed at score 7 or higher;
-- Discord sent successfully;
-- history was exported to `screen_run_20260810T150715Z.json`;
-- daily history files were present for August 3 through August 10.
+| Unit | When | Runs |
+| --- | --- | --- |
+| `sports-wnba-forecast@afternoon.timer` | Sat/Sun 12:36 | `run_forecast_pipeline.py --slot afternoon --send-discord` |
+| `sports-wnba-forecast@evening.timer` | daily 18:45 | `run_forecast_pipeline.py --slot evening --send-discord` |
+| `sports-wnba-forecast-grade.timer` | daily 06:17 | `grade_forecast_board.py --send-discord` |
 
-The task is interactive-only under `colemason41`. A closed laptop does not matter because it runs on the Windows desktop, but that desktop must be powered on and the user logged in.
+Legacy timers (`sports-wnba-daily`, `sports-wnba-shadow-capture`,
+`sports-wnba-shadow-grade`) are **disabled**. The cutover helper is
+`scripts/disable_legacy_wnba_timers.sh`.
 
-## Research question and current theory
+## Source reality on the VM
 
-The motivating question is whether we can move beyond “a player has stayed hot over the last five games” and predict how the coming game will actually play out. The intended direction is a probabilistic player/game model built from role, minutes, per-minute production, opponent and matchup, injuries/rotation, pace and game environment, then compared with the offered line and price.
+Bovada blocks the Azure datacenter IP with a 302 redirect loop, so the VM
+currently builds game markets from **Polymarket** while Bovada remains primary
+where reachable. Discord labels the board `Game prices: Polymarket reference`
+in that case. Do not read VM ROI as executable Bovada ROI.
 
-Shadow v1 is the first narrow step, not the completed vision. It:
+## Season operating plan
 
-- handles PTS only;
-- uses only games before the slate date;
-- projects minutes and points per minute separately;
-- applies conservative total and blowout context when ESPN provides it;
-- simulates 10,000 outcomes deterministically;
-- outputs a point estimate, uncertainty interval, over probability, fair price, captured market price, and research-only selection;
-- never calls Discord or changes production selection.
+Let the system run for the remainder of the regular season as a live
+paper-betting experiment. Do not reject the model or add shadow mode.
 
-The leading hypothesis after the engineering smoke test is that minutes and role uncertainty will be a major source of error. That remains a hypothesis, not a tuned conclusion.
+- Keep the deployed model version **frozen** long enough to measure honestly;
+  do not refit after every slate.
+- Review weekly: calibration, units/ROI by market, PTS/REB/AST/3PM vs
+  ML/spread/total, `health=ok` rate, missing/stale-source counts, and
+  Polymarket-primary frequency.
+- Iterate in versioned batches: one change, refit, offline compare, deploy only
+  after confirming no leakage or pipeline regression.
+- Prioritized model improvements: active/DNP probability, minutes/role
+  modeling, team opponent adjustment, prop-specific uncertainty calibration,
+  source-quality separation (sportsbook vs reference price).
 
-## Evidence collected so far
+## Historical context (legacy screener, retired)
 
-Only one completed-slate engineering snapshot has been graded. It was captured 4.8 minutes after scheduled tip, so it is excluded from prospective evidence. All ten rows came from one game and were strongly correlated.
-
-- 10 resolved projections;
-- 8 research selections, 5 wins and 3 losses;
-- hypothetical flat-stake result: +1.4576 units;
-- points MAE 5.595 and RMSE 6.7628;
-- over-probability Brier score 0.2301 versus no-vig market Brier 0.2499;
-- line-threshold MAE 5.70;
-- 6 of 10 actual results inside the model's 10th–90th percentile interval;
-- minutes MAE 3.894;
-- actual-minus-projected point bias +1.285 and minute bias +1.024;
-- minutes-error/points-error correlation 0.439.
-
-These results prove that capture, grading, price settlement, and metrics can work. They do not establish predictive edge.
-
-## Critical blocker found August 10
-
-Status update August 28: superseded — see the August 28 evidence note and `docs/v1_evaluation.md`. Preserved below for the historical record.
-
-The Windows shadow collector has created **zero** snapshots since deployment.
-
-`WNBA Shadow Capture` runs hourly from 9 a.m. through 11 p.m. and its latest task result often shows 0. However, every observed run that actually entered the 20–90 minute game window aborted at the first progress message, for example:
-
-```text
-Shadow capture failed: Loading shadow logs 1/11: Allisha Gray (ATL)
-```
-
-The likely root cause is already visible in the code: `run_projection_shadow.py` intentionally writes player-loading progress to stderr, while `scripts/run_wnba_shadow_capture_task.ps1` invokes Python with `2>&1` under `$ErrorActionPreference = "Stop"`. Windows PowerShell can promote native stderr into a terminating `NativeCommandError`. Production previously solved this by capturing native stdout/stderr through `Start-Process` temp files.
-
-Why the dashboard was misleading: a failed eligible-window run was followed by later hourly runs with no eligible games; those returned 0 and replaced Task Scheduler's visible `LastTaskResult`. The grader then also returned 0 because no snapshots existed. Task status alone therefore looked healthy.
-
-The next agent should reproduce and fix this in the isolated shadow wrapper only, add a regression/smoke check for native stderr handling, deploy only to `wnba_props_shadow`, and verify an actual snapshot artifact plus registry entry. Do not modify `run_nightly.py`, production output/Discord code, `WNBA Props Daily`, or production scheduler files as part of that repair.
-
-## Evaluation gate
-
-Strict evidence admits only captures made 20–90 minutes before tip. The rollup stays `COLLECTING` until it has at least:
-
-- 7 distinct slates;
-- 20 distinct games;
-- 100 strict pregame projections;
-- 90% both-side price coverage.
-
-`READY_FOR_REVIEW` means enough data to inspect, not that the model has betting edge. Given correlation and calibration uncertainty, expect to continue beyond the minimum gate—preferably 20–30 slates and several hundred projections—before making a serious model comparison.
-
-## Immediate sequence
-
-1. Preserve and record local/Windows Git state.
-2. Repair the isolated shadow PowerShell capture wrapper using the proven production subprocess pattern or another tested native-process capture mechanism.
-3. Test the wrapper with a command that writes normal progress to stderr and still exits 0.
-4. Run the full local shadow/unit test suite.
-5. Deploy only the shadow files to the shadow checkout/branch.
-6. During a real 20–90 minute window, verify a new `shadow_projection_*.json`, a capture-registry entry, nonzero projection counts, price coverage, and an honest task exit code.
-7. After games finalize, verify grading and rollup artifacts and all unresolved/DNP/price-settlement cases.
-8. Let the frozen v1 collect without tuning until the evidence gate is met.
-
-## Guardrails
-
-- Research output is not a recommendation and must not enter Discord.
-- Never use post-tip data as prospective evidence.
-- Never tune v1 from the one-game smoke result or from partial forward results.
-- Keep raw captures immutable; version future model changes and evaluate them on later dates.
-- Report by slate and game as well as by player row because props from the same game are correlated.
-- Confirm artifacts and log counters; `Ready` and `LastTaskResult: 0` are insufficient operational proof.
-- Preserve production and unrelated dirty work.
+The prior heuristic screener (`run_nightly.py`) is deprecated and unscheduled.
+Its Aug 3-30 Discord-policy holdout graded **53-47-2, -10.94% ROI** (no edge).
+The shadow projection challenger (v2) is research-only and not scheduled. Do not
+re-enable either; the forecast board replaces them.
 
 ## Read next
 
-- `docs/project_history_and_lessons.md` for the story of successes, failures, and decisions.
-- `docs/research_model_roadmap.md` for the theory, evaluation plan, and open questions.
-- `docs/shadow_projection_v1.md` for commands and implementation behavior.
-- `docs/new_agent_prompt.md` for a copy-ready continuation prompt.
-
+- `README.md` for commands and current stack.
+- `scripts/systemd/README.md` for unit install/update.
+- `docs/research_model_roadmap.md` for projection theory and open questions.
