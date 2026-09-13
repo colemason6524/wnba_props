@@ -213,7 +213,47 @@ with `systemctl --user list-timers` and per-task logs in `outputs/logs/`.
 The VM checkout must stay on a clean `main` or scheduled Discord is blocked
 by `WNBA_REQUIRE_CLEAN_TREE`.
 
-### Windows Task Scheduler (retired September 2026)
+### Windows Task Scheduler (forecast pipeline)
+
+The Windows desktop can run the prediction-first forecast pipeline. This is
+useful when the Azure VM cannot reach Bovada (datacenter IPs get a 302 redirect
+loop), because a residential connection can pull live Bovada prices.
+
+From an elevated PowerShell on the Windows box:
+
+```powershell
+cd C:\Users\muski\wnba_props
+git pull --ff-only origin main
+powershell -ExecutionPolicy Bypass -File scripts\setup_windows_forecast_tasks.ps1
+```
+
+That registers three interactive tasks and disables the legacy ones:
+
+| Task | Schedule (local) | Runs |
+| --- | --- | --- |
+| `WNBA Forecast Weekend` | Sat/Sun 12:36 | `run_forecast_pipeline.py --slot afternoon --send-discord` |
+| `WNBA Forecast Daily` | daily 18:45 | `run_forecast_pipeline.py --slot evening --send-discord` |
+| `WNBA Forecast Grade` | daily 06:17 | `grade_forecast_board.py --send-discord` (grades yesterday) |
+
+Secrets are read from `%USERPROFILE%\.config\wnba_props\env` (KEY=VALUE per
+line). At minimum set:
+
+```text
+WNBA_PROPS_DISCORD_WEBHOOK_URL=...
+```
+
+The wrapper logs to `outputs\logs\wnba_forecast.log` and
+`outputs\logs\wnba_forecast_grade.log`. Test manually before trusting the
+schedule:
+
+```powershell
+.\scripts\run_wnba_forecast_task.ps1 -ProjectDir "C:\Users\muski\wnba_props" -Slot evening -NoDiscord
+.\scripts\run_wnba_forecast_grade_task.ps1 -ProjectDir "C:\Users\muski\wnba_props" -NoDiscord
+```
+
+Windows uses the legacy daily screen (below) only for rollback.
+
+### Windows legacy screener (retired September 2026)
 
 After cloning the repo on Windows, test the exact scheduled command manually from PowerShell:
 
