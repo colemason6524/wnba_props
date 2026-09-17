@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import Optional
 
 
-FAVORABLE_THRESHOLD = 0.03
-CLOSE_THRESHOLD = -0.02
+PLAYABLE_THRESHOLD = 0.03
+THIN_THRESHOLD = -0.02
 
 
 def american_payout(price: Optional[int]) -> Optional[float]:
@@ -53,9 +53,9 @@ def expected_value_with_push(
 
 def value_label(ev: Optional[float]) -> str:
     if ev is None:
-        return "UNPRICED"
-    if ev >= FAVORABLE_THRESHOLD:
-        return "FAVORABLE"
-    if ev >= CLOSE_THRESHOLD:
-        return "CLOSE"
-    return "UNFAVORABLE"
+        return "unpriced"
+    if ev >= PLAYABLE_THRESHOLD:
+        return "playable"
+    if ev >= THIN_THRESHOLD:
+        return "thin"
+    return "no_value"

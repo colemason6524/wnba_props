@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parent.parent
 CACHE_DIR = ROOT / ".cache"
 CONFIG_DIR = ROOT / "config"
 OUTPUTS_DIR = ROOT / "outputs"
+PLAYER_POSITIONS_PATH = CONFIG_DIR / "player_positions.json"
 
 
 SUPPORTED_PROP_TYPES = [

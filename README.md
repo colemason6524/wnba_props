@@ -34,17 +34,44 @@ Board publication fails closed: if game-market coverage, player coverage, or
 priced-row minimums fall below the configured thresholds in
 `wnba_props/config.py`, the board is marked `degraded` and Discord is blocked.
 
-Discord output can be split across two channels for readability by setting
-`WNBA_PROPS_TEAM_DISCORD_WEBHOOK_URL` (moneyline/spread/totals) and
-`WNBA_PROPS_PLAYER_DISCORD_WEBHOOK_URL` (PTS/REB/AST/3PM). If either is unset,
-the single `WNBA_PROPS_DISCORD_WEBHOOK_URL` is used for all sections.
+Discord output can be split across two channels by setting
+`WNBA_PROPS_PLAYER_DISCORD_WEBHOOK_URL` (PTS/REB/AST/3PM). The team channel reuses
+the single `WNBA_PROPS_DISCORD_WEBHOOK_URL` (moneyline/spread/totals), or
+`WNBA_PROPS_TEAM_DISCORD_WEBHOOK_URL` if set. The daily grading recap splits the
+same way: a `WNBA Team Recap` to the team channel and a `WNBA Player Props Recap`
+to the player channel. If only one webhook is configured, everything posts to it.
+
+Board rows use the shared forecast vocabulary: `playable` / `thin` / `no_value`
+(unpriced lines are `unpriced`), matching the sibling MLB/CFB props boards.
+
+### Model inputs beyond team form
+
+- **Game environment factor:** each prop's per-minute rate is scaled by the
+  expected game total (from the game model's total projection) versus the league
+  baseline, capped at ±5% (`wnba_props/modeling/rates.py`). Fast, high-total
+  games lift opportunity; slow games cut it.
+- **Starter / DNP probability:** a role- and status-based probability that the
+  player does not appear (`wnba_props/modeling/minutes.py`). Since grading voids
+  DNPs, it is surfaced as a `DNP_RISK` / `HIGH_DNP_RISK` flag and a
+  `dnp_probability` field rather than folded into the played-outcome
+  distribution.
+- **Opponent positional defense:** opponent allowance is blended with the
+  opponent's allowance to the player's position class (G/F/C), using
+  `config/player_positions.json` (regenerate with
+  `python3 scripts/fetch_player_positions.py`). Falls back to team-level
+  allowance when a position is unknown.
 
 Model artifacts are fitted offline and loaded as frozen production inputs:
 
 ```bash
 python3 scripts/fit_game_engine.py            # winner / margin / total
 python3 scripts/fit_props_engine.py           # PTS/REB/AST/3PM residual + calibration
+python3 scripts/fetch_player_positions.py     # config/player_positions.json
 ```
+
+Residual artifacts are fit on the base per-minute rate, so the environment,
+opponent, and positional adjustments layer on at projection time without
+requiring a refit.
 
 A missing or invalid artifact fails the run (see `wnba_props/modeling/registry.py`).
 Outputs: `outputs/forecast_boards/`, `outputs/ledger/forecast_ledger.jsonl`,

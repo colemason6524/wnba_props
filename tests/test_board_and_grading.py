@@ -60,18 +60,18 @@ def _game_forecast() -> GameForecast:
         winner_probability=0.62,
         winner_price=-150,
         winner_ev=0.08,
-        winner_value="FAVORABLE",
+        winner_value="playable",
         spread_pick="HOME",
         spread_probability=0.58,
         spread_price=-110,
         spread_ev=0.14,
-        spread_value="FAVORABLE",
+        spread_value="playable",
         spread_line=-3.5,
         total_pick="OVER",
         total_probability=0.54,
         total_price=-105,
         total_ev=0.06,
-        total_value="FAVORABLE",
+        total_value="playable",
         total_line=164.5,
     )
 
@@ -98,7 +98,7 @@ def _prop_forecast() -> PropForecast:
         percentile_90=31.0,
         price=-110,
         ev=0.10,
-        value_label="FAVORABLE",
+        value_label="playable",
         over_odds=-110,
         under_odds=-110,
     )
@@ -494,6 +494,78 @@ class DiscordRenderTests(unittest.TestCase):
         chunks = chunk_message(text, limit=100)
         self.assertTrue(all(len(chunk) <= 100 for chunk in chunks))
         self.assertEqual("\n".join(chunks), text)
+
+
+class SplitRecapTests(unittest.TestCase):
+    def test_subset_summary_filters_markets(self) -> None:
+        from grade_forecast_board import _subset_summary
+        from wnba_props.notifiers.forecast_discord import PLAYER_MARKETS, TEAM_MARKETS
+
+        rows = [
+            {"market": "ML", "outcome": WIN, "units": 0.91},
+            {"market": "PTS", "outcome": LOSS, "units": -1.0},
+        ]
+        team = _subset_summary(rows, TEAM_MARKETS)
+        player = _subset_summary(rows, PLAYER_MARKETS)
+        self.assertEqual(team["overall"]["plays"], 1)
+        self.assertEqual(player["overall"]["plays"], 1)
+        self.assertIn("ML", team["by_market"])
+        self.assertNotIn("PTS", team["by_market"])
+
+    def test_recap_title_override(self) -> None:
+        from wnba_props.notifiers.forecast_discord import render_recap
+
+        text = render_recap(
+            "2026-09-17",
+            {"overall": {}, "by_market": {}, "pending": 0},
+            title="WNBA Team Recap",
+        )
+        self.assertIn("WNBA Team Recap - 2026-09-17", text)
+
+
+class PositionalFeatureTests(unittest.TestCase):
+    def test_positional_allowance_uses_position_map(self) -> None:
+        from datetime import timedelta
+
+        from wnba_props.features.player import build_player_features
+
+        base = date(2026, 6, 1)
+        logs: list[PlayerGameLog] = []
+        for index in range(8):
+            day = base - timedelta(days=index + 1)
+            for name, raw in (("guard one", "Guard One"), ("big one", "Big One")):
+                is_guard = "guard" in name
+                logs.append(
+                    PlayerGameLog(
+                        player_name_raw=raw,
+                        player_name_norm=name,
+                        game_date=day,
+                        team="NY",
+                        opponent="PHX",
+                        minutes=30.0,
+                        points=20 if is_guard else 10,
+                        rebounds=3 if is_guard else 9,
+                        assists=6,
+                        threes_made=2,
+                        did_play=True,
+                        source="fixture",
+                    )
+                )
+        positions = {"guard one": "G", "big one": "C"}
+        features = build_player_features(
+            logs=logs,
+            league_logs=logs,
+            player_name_norm="guard one",
+            player_name_raw="Guard One",
+            team="NY",
+            opponent="PHX",
+            game_date=base,
+            prop_type="REB",
+            player_positions=positions,
+        )
+        assert features is not None
+        self.assertEqual(features.position, "G")
+        self.assertIsNotNone(features.opponent_positional_allowance)
 
 
 if __name__ == "__main__":

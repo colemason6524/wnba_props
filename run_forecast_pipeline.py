@@ -24,7 +24,13 @@ sys.path.insert(0, str(ROOT))
 
 from wnba_props.board import build_daily_board, health_report, write_board, write_ledger
 from wnba_props.cache import JsonCache
-from wnba_props.config import CACHE_DIR, OUTPUTS_DIR, ESPN_TO_TEAM_ABBR, load_settings
+from wnba_props.config import (
+    CACHE_DIR,
+    ESPN_TO_TEAM_ABBR,
+    OUTPUTS_DIR,
+    PLAYER_POSITIONS_PATH,
+    load_settings,
+)
 from wnba_props.game_markets import (
     export_game_markets,
     fetch_game_markets,
@@ -43,7 +49,12 @@ from wnba_props.sources.espn_gamelog import EspnGameLogSource
 from wnba_props.sources.espn_injuries import EspnInjurySource
 from wnba_props.sources.playerprops import PlayerPropsSource
 from wnba_props.features.team import parse_team_results_from_scoreboard
-from wnba_props.features.player import league_stat_baselines
+from wnba_props.features.player import league_stat_baselines, league_positional_baselines
+from wnba_props.features.positions import (
+    fetch_position_map,
+    load_position_map,
+    merge_position_maps,
+)
 
 FORECAST_BOARDS_DIR = OUTPUTS_DIR / "forecast_boards"
 LEDGER_DIR = OUTPUTS_DIR / "ledger"
@@ -222,6 +233,15 @@ def run_pipeline(
         league_logs, settings.supported_prop_types
     )
 
+    print("[pipeline] stage=positions")
+    position_map = merge_position_maps(
+        load_position_map(PLAYER_POSITIONS_PATH),
+        fetch_position_map({log.team for log in league_logs}, shared_cache),
+    )
+    positional_baselines = league_positional_baselines(
+        league_logs, settings.supported_prop_types, position_map
+    )
+
     print("[pipeline] stage=team_results")
     team_results = _load_team_results(settings.screen_date)
 
@@ -239,6 +259,11 @@ def run_pipeline(
         "player_logs_loaded": len(logs_by_player),
         "injuries_by_team": {team: len(items) for team, items in team_injuries.items()},
         "league_baselines": {k: round(v, 3) for k, v in league_baselines.items()},
+        "positions_loaded": len(position_map),
+        "positional_baselines": {
+            f"{prop}:{pos}": round(value, 3)
+            for (prop, pos), value in positional_baselines.items()
+        },
         "stale_prop_lines_dropped": dropped_stale,
         "game_markets_stale": bool(market_diags.get("bovada_stale")),
         "game_markets_bovada_error": market_diags.get("bovada_error"),
@@ -258,6 +283,8 @@ def run_pipeline(
         market_provenance=snapshots,
         player_statuses=player_statuses,
         league_baselines=league_baselines,
+        player_positions=position_map,
+        positional_baselines=positional_baselines,
         provenance=provenance,
         simulations=simulations,
     )

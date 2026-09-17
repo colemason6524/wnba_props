@@ -8,7 +8,7 @@ from ..features.player import PlayerFeatures
 from ..models import PropLine
 from .calibration import ResidualArtifact
 from .minutes import MinutesProjection, project_minutes, simulate_prop
-from .rates import project_rate
+from .rates import LEAGUE_GAME_TOTAL_BASELINE, project_rate
 from .value import expected_value_with_push, value_label
 
 
@@ -40,6 +40,8 @@ class PropForecast:
     flags: Sequence[str] = field(default_factory=list)
     market_source: str = ""
     captured_at: str = ""
+    dnp_probability: float = 0.0
+    void_probability: float = 0.0
 
 
 def forecast_prop(
@@ -49,13 +51,22 @@ def forecast_prop(
     residuals: ResidualArtifact,
     player_status: str = "",
     league_baseline: Optional[float] = None,
+    positional_baseline: Optional[float] = None,
+    game_total: Optional[float] = None,
+    game_total_baseline: float = LEAGUE_GAME_TOTAL_BASELINE,
     simulations: int = 10_000,
 ) -> Optional[PropForecast]:
     minutes = project_minutes(features, player_status=player_status)
     if minutes.availability_excluded:
         return None
 
-    rate = project_rate(features, league_baseline=league_baseline)
+    rate = project_rate(
+        features,
+        league_baseline=league_baseline,
+        positional_baseline=positional_baseline,
+        game_total=game_total,
+        game_total_baseline=game_total_baseline,
+    )
     simulation = simulate_prop(
         features=features,
         minutes=minutes,
@@ -106,6 +117,8 @@ def forecast_prop(
         flags=flags,
         market_source=line.bookmaker,
         captured_at=line.collected_at.isoformat(),
+        dnp_probability=round(minutes.dnp_probability, 4),
+        void_probability=round(simulation.void_probability, 4),
     )
 
 
@@ -127,6 +140,10 @@ def _flags(
     flags: list[str] = []
     if minutes.availability_uncertain:
         flags.append("AVAILABILITY_UNCERTAIN")
+    if minutes.dnp_probability >= 0.4:
+        flags.append("HIGH_DNP_RISK")
+    elif minutes.dnp_probability >= 0.2:
+        flags.append("DNP_RISK")
     if features.games_played < 8:
         flags.append("THIN_SAMPLE")
     if minutes.projected_minutes < 18.0:

@@ -14,8 +14,9 @@ from wnba_props.modeling.calibration import (
     load_residual_artifact,
     save_residual_artifact,
 )
-from wnba_props.modeling.minutes import project_minutes, simulate_prop
-from wnba_props.modeling.rates import project_rate
+from wnba_props.modeling.minutes import dnp_probability, project_minutes, simulate_prop
+from wnba_props.modeling.rates import game_environment_factor, project_rate
+from wnba_props.features.positions import position_class
 from wnba_props.modeling.value import (
     expected_value,
     expected_value_with_push,
@@ -145,10 +146,10 @@ class SimulationTests(unittest.TestCase):
 
 class ValueTests(unittest.TestCase):
     def test_value_labels(self) -> None:
-        self.assertEqual(value_label(None), "UNPRICED")
-        self.assertEqual(value_label(0.05), "FAVORABLE")
-        self.assertEqual(value_label(0.0), "CLOSE")
-        self.assertEqual(value_label(-0.10), "UNFAVORABLE")
+        self.assertEqual(value_label(None), "unpriced")
+        self.assertEqual(value_label(0.05), "playable")
+        self.assertEqual(value_label(0.0), "thin")
+        self.assertEqual(value_label(-0.10), "no_value")
 
     def test_binary_and_push_ev(self) -> None:
         self.assertAlmostEqual(expected_value(0.5, -110), 0.5 * (100 / 110) - 0.5)
@@ -185,6 +186,79 @@ class PriceIndependenceTests(unittest.TestCase):
         self.assertEqual(first.pick_side, second.pick_side)
         self.assertAlmostEqual(first.pick_probability, second.pick_probability)
         self.assertNotEqual(first.ev, second.ev)
+
+
+class EnvironmentFactorTests(unittest.TestCase):
+    def test_missing_total_is_neutral(self) -> None:
+        self.assertEqual(game_environment_factor(None), 1.0)
+
+    def test_high_total_lifts_rate(self) -> None:
+        self.assertGreater(game_environment_factor(180.0, 164.0), 1.0)
+
+    def test_low_total_cuts_rate(self) -> None:
+        self.assertLess(game_environment_factor(150.0, 164.0), 1.0)
+
+    def test_adjustment_is_capped(self) -> None:
+        self.assertLessEqual(game_environment_factor(400.0, 164.0), 1.05)
+        self.assertGreaterEqual(game_environment_factor(1.0, 164.0), 0.95)
+
+    def test_project_rate_uses_environment(self) -> None:
+        low = project_rate(_features(), game_total=156.0)
+        high = project_rate(_features(), game_total=172.0)
+        self.assertLess(low.projected_rate, high.projected_rate)
+
+    def test_project_rate_blends_positional_allowance(self) -> None:
+        features = _features(opponent_allowance=80.0, opponent_positional_allowance=90.0)
+        team_only = project_rate(features, league_baseline=80.0)
+        blended = project_rate(
+            features, league_baseline=80.0, positional_baseline=80.0
+        )
+        self.assertGreater(blended.projected_rate, team_only.projected_rate)
+
+
+class DnpProbabilityTests(unittest.TestCase):
+    def test_excluded_status_is_certain(self) -> None:
+        self.assertEqual(dnp_probability(_features(), player_status="out"), 1.0)
+
+    def test_questionable_exceeds_healthy_base(self) -> None:
+        base = dnp_probability(_features())
+        self.assertGreater(
+            dnp_probability(_features(), player_status="questionable"), base
+        )
+
+    def test_bench_higher_than_starter(self) -> None:
+        starter = dnp_probability(_features(minutes_avg_l5=32.0, starting=True))
+        bench = dnp_probability(_features(minutes_avg_l5=10.0, starting=False))
+        self.assertGreater(bench, starter)
+
+    def test_simulation_reports_voids_and_keeps_distribution(self) -> None:
+        features = _features()
+        minutes = project_minutes(features, player_status="questionable")
+        artifact = _artifact()
+        result = simulate_prop(
+            features=features,
+            minutes=minutes,
+            projected_rate=0.70,
+            line=20.5,
+            residuals=artifact,
+            simulations=4000,
+            seed_material="dnp",
+        )
+        self.assertGreater(result.void_probability, 0.0)
+        self.assertAlmostEqual(
+            result.over_probability + result.under_probability + result.push_probability,
+            1.0,
+            places=6,
+        )
+
+
+class PositionTests(unittest.TestCase):
+    def test_position_classes(self) -> None:
+        self.assertEqual(position_class("G"), "G")
+        self.assertEqual(position_class("G-F"), "G")
+        self.assertEqual(position_class("F-C"), "F")
+        self.assertEqual(position_class("Center"), "C")
+        self.assertEqual(position_class(""), "")
 
 
 if __name__ == "__main__":

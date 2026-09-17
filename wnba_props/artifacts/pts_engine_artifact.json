@@ -1,8 +1,8 @@
 {
   "calibration_lambda": 1.0,
-  "code_commit": "a29ab82da82d5d2a08e418477292f9ad74ff91b1",
+  "code_commit": "2743c3ee3d739bab3768d5a390c89ffc35c6feda",
   "feature_version": "wnba-features-v1",
-  "fit_at": "2026-09-13T01:29:34.771992+00:00",
+  "fit_at": "2026-09-17T02:54:38.134151+00:00",
   "model_id": "wnba-props-residual-v1",
   "n_rows": 2441,
   "pairs": [

@@ -25,6 +25,9 @@ SECTION_ORDER = (
 TEAM_SECTIONS = ("Moneyline", "Spread", "Totals")
 PLAYER_SECTIONS = ("Points", "Rebounds", "Assists", "Three-Pointers")
 
+TEAM_MARKETS = ("ML", "SPREAD", "TOTAL")
+PLAYER_MARKETS = ("PTS", "REB", "AST", "3PM")
+
 
 def split_sections(
     sections: dict[str, Sequence[dict[str, Any]]],
@@ -77,7 +80,7 @@ def _render_row(row: dict[str, Any]) -> str:
     p_txt = f"{p_pick:.0%}" if p_pick is not None else "n/a"
     ev = row.get("ev")
     ev_txt = f"EV {ev:+.2f}" if ev is not None else "EV n/a"
-    value = str(row.get("value", "UNPRICED"))
+    value = str(row.get("value", "unpriced"))
     return f"- {subject} | {pick_label}{line_txt}{price_txt} | p={p_txt} | {ev_txt} [{value}]"
 
 
@@ -187,9 +190,9 @@ def _send_with_retry(
     return last
 
 
-def render_recap(screen_date: str, summary: dict) -> str:
+def render_recap(screen_date: str, summary: dict, *, title: str = "WNBA Forecast Recap") -> str:
     overall = summary.get("overall", {})
-    lines = [f"WNBA Forecast Recap - {screen_date}", ""]
+    lines = [f"{title} - {screen_date}", ""]
     lines.append(
         f"Overall: {overall.get('wins', 0)}-{overall.get('losses', 0)}-{overall.get('pushes', 0)}"
         f" | {overall.get('units', 0.0):+.2f}u"
@@ -214,10 +217,11 @@ def send_recap(
     *,
     screen_date: str,
     summary: dict,
+    title: str = "WNBA Forecast Recap",
     retries: int = 3,
     username: str = "WNBA Forecast",
 ) -> DiscordResult:
-    text = render_recap(screen_date, summary)
+    text = render_recap(screen_date, summary, title=title)
     return _send_with_retry(webhook_url, text, retries, username)
 
 

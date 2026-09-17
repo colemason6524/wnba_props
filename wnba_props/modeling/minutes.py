@@ -16,6 +16,7 @@ class MinutesProjection:
     starter_probability: float
     availability_uncertain: bool
     availability_excluded: bool = False
+    dnp_probability: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,7 @@ class SimulationResult:
     percentile_10: float
     percentile_90: float
     samples: int
+    void_probability: float = 0.0
 
 
 _EXCLUDED_STATUSES = {"out", "injured reserve", "suspended"}
@@ -40,6 +42,43 @@ _UNCERTAIN_STATUSES = {
     "probable",
     "game-time decision",
 }
+
+_STATUS_DNP_PROBABILITY = {
+    "doubtful": 0.50,
+    "game-time decision": 0.30,
+    "questionable": 0.25,
+    "day-to-day": 0.25,
+    "probable": 0.08,
+}
+
+_BASE_DNP_PROBABILITY = 0.03
+_BENCH_DNP_PREMIUM = 0.12
+_MAX_DNP_PROBABILITY = 0.95
+
+
+def dnp_probability(
+    features: PlayerFeatures,
+    *,
+    player_status: str = "",
+    starter_probability: Optional[float] = None,
+) -> float:
+    """Probability the player does not appear at all.
+
+    Combines a role-based base rate (bench players miss more) with the
+    current injury status. Grading voids DNPs, so this is surfaced as a risk
+    signal rather than folded into the played-outcome distribution.
+    """
+    status = player_status.strip().lower()
+    if status in _EXCLUDED_STATUSES:
+        return 1.0
+    if starter_probability is None:
+        starter_probability = _clamp(features.minutes_avg_l5 / 30.0, 0.0, 1.0)
+        if features.starting:
+            starter_probability = max(starter_probability, 0.6)
+    base = _BASE_DNP_PROBABILITY + _BENCH_DNP_PREMIUM * (1.0 - starter_probability)
+    status_rate = _STATUS_DNP_PROBABILITY.get(status)
+    probability = base if status_rate is None else max(base, status_rate)
+    return _clamp(probability, 0.0, _MAX_DNP_PROBABILITY)
 
 
 def project_minutes(
@@ -77,6 +116,11 @@ def project_minutes(
         starter_probability=starter_probability,
         availability_uncertain=uncertain,
         availability_excluded=excluded,
+        dnp_probability=dnp_probability(
+            features,
+            player_status=player_status,
+            starter_probability=starter_probability,
+        ),
     )
 
 
@@ -98,18 +142,25 @@ def simulate_prop(
     seed = _seed(features, line, residuals, seed_material)
     rng = random.Random(seed)
     pair_count = len(residuals.pairs)
+    dnp = _clamp(minutes.dnp_probability, 0.0, 1.0)
 
     wins_over = 0
     wins_under = 0
     pushes = 0
+    voids = 0
+    played = 0
     total = 0.0
     values: list[int] = []
 
     for _ in range(simulations):
+        if dnp > 0.0 and rng.random() < dnp:
+            voids += 1
+            continue
         minutes_z, rate_error = residuals.pairs[rng.randrange(pair_count)]
         sampled_minutes = max(0.0, minutes.projected_minutes + minutes.minutes_sd * minutes_z)
         sampled_rate = max(0.0, projected_rate + rate_error)
         value = max(0, int(round(sampled_minutes * sampled_rate)))
+        played += 1
         values.append(value)
         total += value
         if value > line:
@@ -119,6 +170,21 @@ def simulate_prop(
         else:
             pushes += 1
 
+    if played <= 0:
+        return SimulationResult(
+            over_probability=0.0,
+            under_probability=0.0,
+            push_probability=0.0,
+            conditional_over_probability=0.5,
+            conditional_under_probability=0.5,
+            raw_conditional_over_probability=0.5,
+            projected_mean=0.0,
+            percentile_10=0.0,
+            percentile_90=0.0,
+            samples=simulations,
+            void_probability=1.0,
+        )
+
     non_push = wins_over + wins_under
     raw_conditional_over = wins_over / non_push if non_push else 0.5
     conditional_over = calibrate_probability(
@@ -126,10 +192,10 @@ def simulate_prop(
     )
     conditional_under = 1.0 - conditional_over
 
-    stay_probability = 1.0 - (pushes / simulations)
+    stay_probability = 1.0 - (pushes / played)
     over_probability = stay_probability * conditional_over
     under_probability = stay_probability * conditional_under
-    push_probability = pushes / simulations
+    push_probability = pushes / played
 
     values.sort()
     return SimulationResult(
@@ -139,10 +205,11 @@ def simulate_prop(
         conditional_over_probability=conditional_over,
         conditional_under_probability=conditional_under,
         raw_conditional_over_probability=raw_conditional_over,
-        projected_mean=total / simulations,
+        projected_mean=total / played,
         percentile_10=float(_percentile(values, 0.10)),
         percentile_90=float(_percentile(values, 0.90)),
         samples=simulations,
+        void_probability=voids / simulations,
     )
 
 

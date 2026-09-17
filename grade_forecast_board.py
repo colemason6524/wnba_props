@@ -33,7 +33,11 @@ from wnba_props.ledger import (
     roi_summary,
     settle_rows,
 )
-from wnba_props.notifiers.forecast_discord import send_recap
+from wnba_props.notifiers.forecast_discord import (
+    PLAYER_MARKETS,
+    TEAM_MARKETS,
+    send_recap,
+)
 from wnba_props.shadow.sources import ShadowEspnBoxscoreSource, ShadowEspnSlateSource
 from wnba_props.utils import fetch_espn_json, normalize_name
 
@@ -160,6 +164,11 @@ def _summarize(rows: list[dict]) -> dict:
     }
 
 
+def _subset_summary(rows: list[dict], markets: tuple[str, ...]) -> dict:
+    subset = [row for row in rows if str(row.get("market", "")) in markets]
+    return _summarize(subset)
+
+
 def grade_date(
     screen_date: date,
     *,
@@ -220,12 +229,38 @@ def grade_date(
     )
 
     if send_discord:
-        webhook = webhook_url or settings.discord_webhook_url
-        result = send_recap(webhook, screen_date=screen_date.isoformat(), summary=summary)
-        if not result.ok:
-            print(f"[grade] discord recap failed: {result.error}", file=sys.stderr)
-            return 1
-        print("[grade] discord recap sent")
+        primary = webhook_url or settings.discord_webhook_url
+        team_hook = settings.discord_team_webhook_url or primary
+        player_hook = settings.discord_player_webhook_url or primary
+        split = bool(
+            settings.discord_team_webhook_url or settings.discord_player_webhook_url
+        )
+        if not split or team_hook == player_hook:
+            result = send_recap(primary, screen_date=screen_date.isoformat(), summary=summary)
+            if not result.ok:
+                print(f"[grade] discord recap failed: {result.error}", file=sys.stderr)
+                return 1
+            print("[grade] discord recap sent")
+        else:
+            team_summary = _subset_summary(graded_rows, TEAM_MARKETS)
+            player_summary = _subset_summary(graded_rows, PLAYER_MARKETS)
+            team_result = send_recap(
+                team_hook,
+                screen_date=screen_date.isoformat(),
+                summary=team_summary,
+                title="WNBA Team Recap",
+            )
+            player_result = send_recap(
+                player_hook,
+                screen_date=screen_date.isoformat(),
+                summary=player_summary,
+                title="WNBA Player Props Recap",
+            )
+            if not team_result.ok or not player_result.ok:
+                error = team_result.error if not team_result.ok else player_result.error
+                print(f"[grade] discord recap failed: {error}", file=sys.stderr)
+                return 1
+            print("[grade] discord recap sent (team + player)")
     return 0
 
 

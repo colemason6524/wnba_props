@@ -37,10 +37,22 @@ PlayerProps.ai player lines
 
 - **Game model:** logistic winner + ridge margin/total on team form features.
 - **Props:** minutes x rate simulation from joint residual artifacts per
-  PTS/REB/AST/3PM, with league-baseline opponent adjustment.
+  PTS/REB/AST/3PM, with league-baseline opponent adjustment, an opponent
+  positional (G/F/C) allowance blend, a game-environment (expected total) rate
+  factor capped at ±5%, and a role/status DNP probability surfaced as a risk
+  flag.
+- **Position map:** `config/player_positions.json` (regenerate with
+  `scripts/fetch_player_positions.py`); unknown positions fall back to
+  team-level allowance.
+- **Discord:** board and daily recap can split across a team channel
+  (`WNBA_PROPS_DISCORD_WEBHOOK_URL`, ML/spread/totals) and a player channel
+  (`WNBA_PROPS_PLAYER_DISCORD_WEBHOOK_URL`, PTS/REB/AST/3PM). Row value labels
+  are `playable` / `thin` / `no_value`.
 - **Artifacts:** `wnba_props/artifacts/`; load failure stops the run
   (`wnba_props/modeling/registry.py`). Fit with `scripts/fit_game_engine.py`
-  and `scripts/fit_props_engine.py`.
+  and `scripts/fit_props_engine.py`. Residual artifacts are fit on the base
+  rate; environment/opponent/positional adjustments layer on at projection
+  time, so those changes do not require a refit.
 - **Publication is fail-closed:** coverage gates in `wnba_props/config.py`
   (`MIN_EVENT_MATCH_RATIO`, `MIN_PLAYER_LOAD_RATIO`, `MIN_EVALUATED_LINES`,
   `MAX_LINE_AGE_MINUTES`). A degraded board is withheld; Discord receives a
@@ -82,9 +94,11 @@ paper-betting experiment. Do not reject the model or add shadow mode.
   Polymarket-primary frequency.
 - Iterate in versioned batches: one change, refit, offline compare, deploy only
   after confirming no leakage or pipeline regression.
-- Prioritized model improvements: active/DNP probability, minutes/role
-  modeling, team opponent adjustment, prop-specific uncertainty calibration,
-  source-quality separation (sportsbook vs reference price).
+- Prioritized model improvements: active/DNP probability (v1 shipped: role/status
+  DNP flag), minutes/role modeling (v1 shipped: starter probability feeds DNP),
+  team opponent adjustment (shipped), opponent positional defense (v1 shipped),
+  prop-specific uncertainty calibration, source-quality separation (sportsbook
+  vs reference price).
 
 ## Historical context (legacy screener, retired)
 

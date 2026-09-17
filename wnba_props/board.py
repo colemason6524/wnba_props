@@ -19,6 +19,7 @@ from .modeling.game_forecast import (
     forecast_game,
 )
 from .modeling.props_forecast import PropForecast, forecast_prop
+from .modeling.rates import LEAGUE_GAME_TOTAL_BASELINE
 
 
 PROP_SECTIONS = {
@@ -205,6 +206,8 @@ def build_prop_rows(
                 "value": forecast.value_label,
                 "source": forecast.market_source,
                 "captured_at": forecast.captured_at,
+                "dnp_probability": forecast.dnp_probability,
+                "void_probability": forecast.void_probability,
             }
         )
         ledger.append(
@@ -228,6 +231,7 @@ def build_prop_rows(
                 "value": forecast.value_label,
                 "source": forecast.market_source,
                 "captured_at": forecast.captured_at,
+                "dnp_probability": forecast.dnp_probability,
                 "outcome": PENDING if forecast.price is not None else UNPRICED,
                 "units": None,
                 "graded": False,
@@ -254,7 +258,7 @@ def assemble_board(
 
     ledger_rows = game_ledger + prop_ledger
     priced = [row for row in ledger_rows if row["price"] is not None]
-    favorable = [row for row in ledger_rows if row["value"] == "FAVORABLE"]
+    favorable = [row for row in ledger_rows if row["value"] == "playable"]
 
     return ForecastBoard(
         screen_date=screen_date,
@@ -288,6 +292,8 @@ def build_daily_board(
     market_provenance: Optional[Mapping[tuple[str, str], Any]] = None,
     player_statuses: Optional[Mapping[str, str]] = None,
     league_baselines: Optional[Mapping[str, float]] = None,
+    player_positions: Optional[Mapping[str, str]] = None,
+    positional_baselines: Optional[Mapping[tuple[str, str], float]] = None,
     provenance: Optional[Mapping[str, Any]] = None,
     simulations: int = 10_000,
 ) -> ForecastBoard:
@@ -299,6 +305,8 @@ def build_daily_board(
     market_provenance = dict(market_provenance or {})
     player_statuses = dict(player_statuses or {})
     league_baselines = dict(league_baselines or {})
+    player_positions = dict(player_positions or {})
+    positional_baselines = dict(positional_baselines or {})
     residual_artifacts = dict(residual_artifacts or {})
 
     logs_by_player: dict[str, list[PlayerGameLog]] = {}
@@ -340,6 +348,12 @@ def build_daily_board(
             )
 
     prop_forecasts: list[PropForecast] = []
+    total_by_team: dict[str, float] = {}
+    for forecast in game_forecasts:
+        total_by_team[forecast.home_team] = forecast.total_projection
+        total_by_team[forecast.away_team] = forecast.total_projection
+    league_game_total = _league_game_total_baseline(team_results)
+
     for line in prop_lines:
         artifact = residual_artifacts.get(line.prop_type.upper())
         if artifact is None:
@@ -353,6 +367,7 @@ def build_daily_board(
             opponent=line.opponent,
             game_date=line.game_date,
             prop_type=line.prop_type,
+            player_positions=player_positions,
         )
         if features is None:
             continue
@@ -362,6 +377,13 @@ def build_daily_board(
             residuals=artifact,
             player_status=player_statuses.get(line.player_name_norm, ""),
             league_baseline=league_baselines.get(line.prop_type.upper()),
+            positional_baseline=positional_baselines.get(
+                (line.prop_type.upper(), features.position)
+            )
+            if features.position
+            else None,
+            game_total=total_by_team.get(line.team),
+            game_total_baseline=league_game_total,
             simulations=simulations,
         )
         if forecast is not None:
@@ -508,3 +530,10 @@ def _ledger_row(
 
 def _format_signed(value: float) -> str:
     return f"{value:+.1f}"
+
+
+def _league_game_total_baseline(team_results: Sequence[TeamGameResult]) -> float:
+    totals = [result.team_score + result.opponent_score for result in team_results]
+    if not totals:
+        return LEAGUE_GAME_TOTAL_BASELINE
+    return sum(totals) / len(totals)

@@ -49,6 +49,8 @@ class PlayerFeatures:
     games_last_14_days: int
     opponent_allowance: Optional[float]
     starting: bool
+    position: str = ""
+    opponent_positional_allowance: Optional[float] = None
 
 
 def _weighted_mean(values: Sequence[float], half_life_games: float) -> float:
@@ -106,6 +108,34 @@ def _opponent_allowance(
     return mean(by_game.values())
 
 
+def _opponent_positional_allowance(
+    *,
+    logs: Sequence[PlayerGameLog],
+    opponent: str,
+    prop_type: str,
+    game_date: date,
+    position: str,
+    player_positions: Mapping[str, str],
+) -> Optional[float]:
+    """Average per-game total the opponent allows to players of one position class."""
+    if not position:
+        return None
+    by_game: dict[date, int] = {}
+    for log in logs:
+        if log.opponent != opponent:
+            continue
+        if log.game_date >= game_date:
+            continue
+        if not log.did_play or log.minutes <= 0.0:
+            continue
+        if player_positions.get(log.player_name_norm, "") != position:
+            continue
+        by_game[log.game_date] = by_game.get(log.game_date, 0) + stat_value(log, prop_type)
+    if not by_game:
+        return None
+    return mean(by_game.values())
+
+
 def build_player_features(
     *,
     logs: Sequence[PlayerGameLog],
@@ -120,6 +150,8 @@ def build_player_features(
     recent_games: int = 10,
     recency_half_life_games: float = 6.0,
     opponent_allowance_override: Optional[float] = None,
+    player_positions: Optional[Mapping[str, str]] = None,
+    positional_allowance_override: Optional[float] = None,
 ) -> Optional[PlayerFeatures]:
     """Point-in-time player features for a single prop line."""
     prop_type = prop_type.upper()
@@ -181,6 +213,20 @@ def build_player_features(
     )
 
     starting = minutes_avg_l5 >= 24.0
+    position = (player_positions or {}).get(player_name_norm, "")
+    if positional_allowance_override is not None:
+        opponent_positional_allowance = positional_allowance_override
+    elif player_positions:
+        opponent_positional_allowance = _opponent_positional_allowance(
+            logs=league_logs,
+            opponent=opponent,
+            prop_type=prop_type,
+            game_date=game_date,
+            position=position,
+            player_positions=player_positions,
+        )
+    else:
+        opponent_positional_allowance = None
 
     return PlayerFeatures(
         player_name_raw=player_name_raw,
@@ -205,6 +251,8 @@ def build_player_features(
         games_last_14_days=games_last_14,
         opponent_allowance=opponent_allowance,
         starting=starting,
+        position=position,
+        opponent_positional_allowance=opponent_positional_allowance,
     )
 
 
@@ -236,26 +284,61 @@ def league_stat_baselines(
     return baselines
 
 
-def _allowance_lookup(
-    logs: Sequence[PlayerGameLog],
+def league_positional_baselines(
+    logs: Iterable[PlayerGameLog],
     prop_types: Sequence[str],
-) -> dict[tuple[str, str], tuple[list[date], list[float]]]:
-    """Precompute cumulative per-game stat totals allowed by each opponent.
+    player_positions: Mapping[str, str],
+) -> dict[tuple[str, str], float]:
+    """Average per-game total each position class produces against the league.
 
-    Returns a mapping of (opponent, prop_type) to sorted game dates and the
-    prefix sums of per-game allowed totals so point-in-time averages can be
-    resolved in logarithmic time.
+    Mirrors ``_opponent_positional_allowance`` so the ratio of an opponent's
+    positional allowance to this baseline is a defensive multiplier.
     """
-    totals: dict[tuple[str, str], dict[date, int]] = {}
+    totals: dict[tuple[str, str], float] = {}
+    team_games: dict[tuple[str, str], set[tuple[str, date]]] = {}
     for log in logs:
         if not log.did_play or log.minutes <= 0.0:
             continue
+        position = player_positions.get(log.player_name_norm, "")
+        if not position:
+            continue
+        marker = (log.team, log.game_date)
         for prop_type in prop_types:
-            key = (log.opponent, prop_type.upper())
-            bucket = totals.setdefault(key, {})
-            bucket[log.game_date] = bucket.get(log.game_date, 0) + stat_value(log, prop_type)
+            key = (prop_type.upper(), position)
+            totals[key] = totals.get(key, 0.0) + stat_value(log, prop_type)
+            team_games.setdefault(key, set()).add(marker)
+    baselines: dict[tuple[str, str], float] = {}
+    for key, total in totals.items():
+        games = len(team_games.get(key, ()))
+        if games > 0:
+            baselines[key] = total / games
+    return baselines
 
-    lookup: dict[tuple[str, str], tuple[list[date], list[float]]] = {}
+
+def _allowance_lookup(
+    logs: Sequence[PlayerGameLog],
+    prop_types: Sequence[str],
+    player_positions: Optional[Mapping[str, str]] = None,
+) -> dict[tuple[str, str, str], tuple[list[date], list[float]]]:
+    """Precompute cumulative per-game stat totals allowed by each opponent.
+
+    Returns a mapping of (opponent, prop_type, position) to sorted game dates
+    and the prefix sums of per-game allowed totals so point-in-time averages can
+    be resolved in logarithmic time. Position ``""`` aggregates every player,
+    reproducing the team-level allowance.
+    """
+    totals: dict[tuple[str, str, str], dict[date, int]] = {}
+    for log in logs:
+        if not log.did_play or log.minutes <= 0.0:
+            continue
+        position = (player_positions or {}).get(log.player_name_norm, "")
+        for prop_type in prop_types:
+            for pos_key in ("", position) if position else ("",):
+                key = (log.opponent, prop_type.upper(), pos_key)
+                bucket = totals.setdefault(key, {})
+                bucket[log.game_date] = bucket.get(log.game_date, 0) + stat_value(log, prop_type)
+
+    lookup: dict[tuple[str, str, str], tuple[list[date], list[float]]] = {}
     for key, bucket in totals.items():
         dates = sorted(bucket)
         prefix = [0.0]
@@ -266,12 +349,13 @@ def _allowance_lookup(
 
 
 def _allowance_before(
-    lookup: Mapping[tuple[str, str], tuple[list[date], list[float]]],
+    lookup: Mapping[tuple[str, str, str], tuple[list[date], list[float]]],
     opponent: str,
     prop_type: str,
     game_date: date,
+    position: str = "",
 ) -> Optional[float]:
-    entry = lookup.get((opponent, prop_type.upper()))
+    entry = lookup.get((opponent, prop_type.upper(), position))
     if entry is None:
         return None
     dates, prefix = entry
@@ -289,6 +373,7 @@ def build_player_feature_table(
     minimum_games: int = 5,
     recent_games: int = 10,
     recency_half_life_games: float = 6.0,
+    player_positions: Optional[Mapping[str, str]] = None,
 ) -> list[PlayerFeatures]:
     """Build a point-in-time feature row for every player-game in a log set.
 
@@ -300,13 +385,14 @@ def build_player_feature_table(
     for log in log_list:
         by_player.setdefault(log.player_name_norm, []).append(log)
 
-    allowance = _allowance_lookup(log_list, prop_types)
+    allowance = _allowance_lookup(log_list, prop_types, player_positions)
 
     rows: list[PlayerFeatures] = []
     for player_logs in by_player.values():
         for log in player_logs:
             if not log.did_play or log.minutes <= 0.0:
                 continue
+            position = (player_positions or {}).get(log.player_name_norm, "")
             for prop_type in prop_types:
                 features = build_player_features(
                     logs=player_logs,
@@ -322,6 +408,14 @@ def build_player_feature_table(
                     recency_half_life_games=recency_half_life_games,
                     opponent_allowance_override=_allowance_before(
                         allowance, log.opponent, prop_type, log.game_date
+                    ),
+                    player_positions=player_positions,
+                    positional_allowance_override=(
+                        _allowance_before(
+                            allowance, log.opponent, prop_type, log.game_date, position
+                        )
+                        if position
+                        else None
                     ),
                 )
                 if features is not None:
