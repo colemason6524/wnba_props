@@ -9,7 +9,7 @@ if you change a unit on the VM, copy it back here, and vice versa.
 | Unit | Schedule (America/Detroit) | Command |
 | --- | --- | --- |
 | `sports-wnba-forecast@afternoon.timer` | weekends 12:36 | `run_forecast_pipeline.py --slot afternoon --send-discord` |
-| `sports-wnba-forecast@pregame.timer` | daily 11,13,15,17 | `run_forecast_pipeline.py --slot pregame --send-discord` |
+| `sports-wnba-forecast@pregame.timer` | daily 10:00 | `run_forecast_pipeline.py --slot pregame --send-discord` (one schedule-aware capture ~75 min before the earliest tip) |
 | `sports-wnba-forecast@evening.timer` | daily 18:45 | `run_forecast_pipeline.py --slot evening --send-discord` |
 | `sports-wnba-forecast-grade.timer` | daily 06:17 | `grade_forecast_board.py --send-discord` |
 
@@ -28,8 +28,10 @@ game-market ROI.
 
 Set `WNBA_SEASON_PHASE=playoff` in `~/.config/wnba_props/env` for the postseason
 so grading artifacts, cumulative `outputs/grades/phase_summary.json`, and Discord
-recaps are labeled separately. The pregame timer is intended for early playoff
-tip-offs; the evening timer remains the daily fallback.
+recaps are labeled separately. The pregame timer fires once daily at 10:00 ET;
+the pipeline then waits until ~75 minutes before the earliest untipped game,
+captures once, and retries an unhealthy board (same `pregame` slot, so Discord
+delivery stays idempotent). The evening timer remains the daily fallback.
 
 Snapshot-versioned model settings live in the environment file as well:
 `MARKET_BLEND_WEIGHT` (default 0.0 = off) and `EV_SIDE_SELECTION` (default

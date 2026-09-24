@@ -34,6 +34,11 @@ case "$TASK" in
         LOG_FILE="$LOG_DIR/wnba_forecast.log"
         TIMEOUT=90m
         FORECAST_SLOT=${WNBA_FORECAST_SLOT:-evening}
+        if [[ "$FORECAST_SLOT" == "pregame" ]]; then
+            # The pregame run sleeps until the capture window before the
+            # earliest tip, so it needs a much longer wall-clock budget.
+            TIMEOUT=12h
+        fi
         COMMAND=("$PYTHON_EXE" run_forecast_pipeline.py --slot "$FORECAST_SLOT")
         if [[ "${WNBA_SEND_DISCORD:-true}" != "false" ]]; then
             COMMAND+=(--send-discord)

@@ -92,14 +92,15 @@ All times are America/Detroit:
 | Unit | Schedule | Command |
 | --- | --- | --- |
 | `sports-wnba-forecast@afternoon.timer` | Sat/Sun 12:36 | `run_forecast_pipeline.py --slot afternoon --send-discord` |
-| `sports-wnba-forecast@pregame.timer` | Daily 11,13,15,17 | `run_forecast_pipeline.py --slot pregame --send-discord` |
+| `sports-wnba-forecast@pregame.timer` | Daily 10:00 | `run_forecast_pipeline.py --slot pregame --send-discord` (waits until 75 min before the earliest tip; retries an unhealthy board) |
 | `sports-wnba-forecast@evening.timer` | Daily 18:45 | `run_forecast_pipeline.py --slot evening --send-discord` |
 | `sports-wnba-forecast-grade.timer` | Daily 06:17 | `grade_forecast_board.py --send-discord` |
 
-Every capture is immutable in the board snapshot and ledger. The official
-performance view uses the latest capture per `game_date/market/subject`; earlier
-captures remain for audit. A later capture cannot silently inherit an earlier
-settled result.
+Every capture is immutable in the board snapshot and ledger: each board file is
+named `forecast_board_{date}_{slot}_{snapshot_id}.json`, so no capture overwrites
+another. The official performance view uses the latest capture per
+`game_date/market/subject`; earlier captures remain for audit. A later capture
+cannot silently inherit an earlier settled result.
 
 ## Discord Output
 

@@ -1,8 +1,10 @@
 [Unit]
-Description=Schedule WNBA playoff pregame forecast captures (early tip coverage)
+Description=Schedule one daily WNBA pregame forecast capture (early tip coverage)
 
 [Timer]
-OnCalendar=Mon-Sun *-*-* 11,13,15,17:00:00 America/Detroit
+# Single daily trigger. The pipeline itself waits until 75 minutes before the
+# earliest untipped game, so this must not fire more than once per day.
+OnCalendar=*-*-* 10:00:00 America/Detroit
 AccuracySec=1s
 RandomizedDelaySec=0
 Persistent=true

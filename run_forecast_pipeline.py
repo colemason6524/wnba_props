@@ -17,6 +17,7 @@ import argparse
 import hashlib
 import json
 import sys
+import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -111,6 +112,50 @@ def _config_fingerprint(settings) -> str:
     ).hexdigest()
 
 
+# Stop retrying a pregame capture once the earliest tip is this close; a late
+# capture is worse than letting the evening run cover the game.
+PREGAME_TIP_BUFFER_MINUTES = 15
+
+
+def _board_path(screen: str, slot: str, snapshot_id: str) -> Path:
+    """Immutable board filename: every capture gets its own file.
+
+    The ledger (not the filename) decides which capture is official, so two
+    captures of the same date/slot can never overwrite each other.
+    """
+    return FORECAST_BOARDS_DIR / f"forecast_board_{screen}_{slot}_{snapshot_id}.json"
+
+
+def _pregame_capture_target(
+    screen_date: date,
+    *,
+    lead_minutes: int,
+    now: datetime | None = None,
+) -> tuple[datetime | None, datetime | None]:
+    """Return (capture_at, earliest_tip) for a schedule-aware pregame run.
+
+    The capture is scheduled ``lead_minutes`` before the earliest game that has
+    not yet tipped. Returns ``(None, None)`` when no future games remain.
+    """
+    current = now or datetime.now(timezone.utc)
+    games = EspnSlateSource().fetch_games(screen_date)
+    future = [game for game in games if game.game_time > current]
+    if not future:
+        return None, None
+    earliest_tip = min(game.game_time for game in future)
+    return earliest_tip - timedelta(minutes=lead_minutes), earliest_tip
+
+
+def _sleep_until(target: datetime) -> None:
+    """Sleep until ``target`` (no-op when the target already passed)."""
+    while True:
+        remaining = (target - datetime.now(timezone.utc)).total_seconds()
+        if remaining <= 0:
+            return
+        print(f"[pipeline] pregame wait: {remaining / 60:.1f}m until capture window")
+        time.sleep(min(remaining, 300.0))
+
+
 def _load_team_results(screen_date: date) -> list:
     """Point-in-time team results from ESPN scoreboards (cached per date)."""
     from wnba_props.utils import fetch_espn_json
@@ -199,7 +244,7 @@ def _collect_player_logs(settings, games, prop_lines, shared_cache, injuries_cac
     return logs_by_player, player_statuses, team_injuries
 
 
-def run_pipeline(
+def _run_pipeline_once(
     *,
     slot: str,
     screen: str,
@@ -208,7 +253,8 @@ def run_pipeline(
     webhook_url: str | None = None,
     refresh: bool = True,
     simulations: int = 10_000,
-) -> int:
+) -> tuple[int, bool]:
+    """Run one board capture; returns (exit_code, healthy)."""
     settings = load_settings()
     settings.screen_date = date.fromisoformat(screen)
     run_id = _run_id(screen, slot)
@@ -222,7 +268,7 @@ def run_pipeline(
         bundle = load_artifacts()
     except ArtifactError as exc:
         print(f"[pipeline] artifact gate failed: {exc}", file=sys.stderr)
-        return 1
+        return 1, False
 
     print("[pipeline] stage=slate")
     games = EspnSlateSource().fetch_games(settings.screen_date)
@@ -231,7 +277,7 @@ def run_pipeline(
         games = [g for g in games if g.game_time > now]
     if not games:
         print(f"[pipeline] no eligible games for {screen}")
-        return 0
+        return 0, True
 
     print("[pipeline] stage=game_markets")
     snapshots, market_diags = fetch_game_markets(
@@ -255,7 +301,7 @@ def run_pipeline(
     prop_lines = line_source.fetch_prop_lines(games)
     if not prop_lines:
         print("[pipeline] no player prop lines found", file=sys.stderr)
-        return 1
+        return 1, False
 
     max_age = timedelta(minutes=settings.max_line_age_minutes)
     now_utc = datetime.now(timezone.utc)
@@ -270,7 +316,7 @@ def run_pipeline(
     prop_lines = fresh_lines
     if not prop_lines:
         print("[pipeline] all player prop lines were stale", file=sys.stderr)
-        return 1
+        return 1, False
 
     print("[pipeline] stage=player_logs")
     logs_by_player, player_statuses, team_injuries = _collect_player_logs(
@@ -364,7 +410,7 @@ def run_pipeline(
     board.summary["health"] = health["status"]
     board.summary["health_reasons"] = health["reasons"]
 
-    board_path = FORECAST_BOARDS_DIR / f"forecast_board_{screen}_{slot}.json"
+    board_path = _board_path(screen, slot, snapshot_id)
     write_board(board_path, board)
     write_ledger(LEDGER_DIR / "forecast_ledger.jsonl", board)
     print(f"[pipeline] board -> {board_path}")
@@ -388,7 +434,7 @@ def run_pipeline(
                     print("[pipeline] discord health alert sent")
                 else:
                     print("[pipeline] discord health alert failed", file=sys.stderr)
-            return 0
+            return 0, False
         results = _send_discord(
             board,
             settings=settings,
@@ -401,12 +447,91 @@ def run_pipeline(
             print(f"[pipeline] discord sent ({len(results)} message(s))")
         elif any(result.ok for result in results):
             print("[pipeline] discord partially sent", file=sys.stderr)
-            return 1
+            return 1, False
         else:
             error = results[0].error if results else "no chunks"
             print(f"[pipeline] discord failed: {error}", file=sys.stderr)
-            return 1
-    return 0
+            return 1, False
+    return 0, True
+
+
+def run_pipeline(
+    *,
+    slot: str,
+    screen: str,
+    send_discord: bool,
+    force_send: bool = False,
+    webhook_url: str | None = None,
+    refresh: bool = True,
+    simulations: int = 10_000,
+    pregame_lead_minutes: int = 75,
+    pregame_retry_minutes: int = 15,
+    pregame_max_retries: int = 3,
+    pregame_wait: bool = True,
+) -> int:
+    """Run the forecast pipeline, with schedule-aware pregame behavior.
+
+    For the ``pregame`` slot this waits until ``pregame_lead_minutes`` before
+    the earliest untipped game, runs one capture, and retries an unhealthy
+    board until the attempts are exhausted or the earliest tip is within
+    ``PREGAME_TIP_BUFFER_MINUTES``. Retries reuse the same ``pregame`` slot, so
+    Discord duplicate suppression keeps them idempotent. All other slots run
+    exactly once, as before.
+    """
+    if slot != "pregame" or not pregame_wait:
+        code, _ = _run_pipeline_once(
+            slot=slot,
+            screen=screen,
+            send_discord=send_discord,
+            force_send=force_send,
+            webhook_url=webhook_url,
+            refresh=refresh,
+            simulations=simulations,
+        )
+        return code
+
+    screen_date = date.fromisoformat(screen)
+    capture_at, earliest_tip = _pregame_capture_target(
+        screen_date, lead_minutes=pregame_lead_minutes
+    )
+    if earliest_tip is None:
+        print(f"[pipeline] pregame: no upcoming games for {screen}")
+        return 0
+    assert capture_at is not None
+    print(
+        f"[pipeline] pregame: earliest tip {earliest_tip.isoformat()}, "
+        f"capture window opens {capture_at.isoformat()}"
+    )
+    _sleep_until(capture_at)
+
+    attempts = 1 + max(0, pregame_max_retries)
+    last_code = 0
+    for attempt in range(1, attempts + 1):
+        print(f"[pipeline] pregame: capture attempt {attempt}/{attempts}")
+        last_code, healthy = _run_pipeline_once(
+            slot=slot,
+            screen=screen,
+            send_discord=send_discord,
+            force_send=force_send,
+            webhook_url=webhook_url,
+            refresh=refresh,
+            simulations=simulations,
+        )
+        if last_code == 0 and healthy:
+            return 0
+        if attempt >= attempts:
+            break
+        now = datetime.now(timezone.utc)
+        cutoff = earliest_tip - timedelta(minutes=PREGAME_TIP_BUFFER_MINUTES)
+        if now >= cutoff:
+            print("[pipeline] pregame: too close to tip; leaving evening run to cover")
+            break
+        wait_seconds = min(
+            pregame_retry_minutes * 60.0, (cutoff - now).total_seconds()
+        )
+        print(f"[pipeline] pregame: retrying in {wait_seconds / 60:.1f}m")
+        time.sleep(max(0.0, wait_seconds))
+    return last_code
 
 
 def _send_discord(
@@ -488,6 +613,29 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--webhook-url", default=None)
     parser.add_argument("--no-refresh", action="store_true")
     parser.add_argument("--simulations", type=int, default=10_000)
+    parser.add_argument(
+        "--pregame-lead-minutes",
+        type=int,
+        default=75,
+        help="Pregame slot: capture this many minutes before the earliest tip.",
+    )
+    parser.add_argument(
+        "--pregame-retry-minutes",
+        type=int,
+        default=15,
+        help="Pregame slot: wait between retries of an unhealthy board.",
+    )
+    parser.add_argument(
+        "--pregame-max-retries",
+        type=int,
+        default=3,
+        help="Pregame slot: retries after the first capture attempt.",
+    )
+    parser.add_argument(
+        "--no-pregame-wait",
+        action="store_true",
+        help="Pregame slot: capture immediately instead of waiting for the window.",
+    )
     return parser.parse_args(argv)
 
 
@@ -502,6 +650,10 @@ def main(argv: list[str] | None = None) -> int:
         webhook_url=args.webhook_url,
         refresh=not args.no_refresh,
         simulations=args.simulations,
+        pregame_lead_minutes=args.pregame_lead_minutes,
+        pregame_retry_minutes=args.pregame_retry_minutes,
+        pregame_max_retries=args.pregame_max_retries,
+        pregame_wait=not args.no_pregame_wait,
     )
 
 

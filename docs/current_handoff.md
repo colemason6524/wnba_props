@@ -82,7 +82,7 @@ PlayerProps.ai player lines
 | Unit | When | Runs |
 | --- | --- | --- |
 | `sports-wnba-forecast@afternoon.timer` | Sat/Sun 12:36 | `run_forecast_pipeline.py --slot afternoon --send-discord` |
-| `sports-wnba-forecast@pregame.timer` | daily 11,13,15,17 | `run_forecast_pipeline.py --slot pregame --send-discord` |
+| `sports-wnba-forecast@pregame.timer` | daily 10:00 | `run_forecast_pipeline.py --slot pregame --send-discord` (one capture ~75 min before the earliest tip; retries an unhealthy board) |
 | `sports-wnba-forecast@evening.timer` | daily 18:45 | `run_forecast_pipeline.py --slot evening --send-discord` |
 | `sports-wnba-forecast-grade.timer` | daily 06:17 | `grade_forecast_board.py --send-discord` |
 
@@ -125,7 +125,10 @@ models. It continues through the postseason with versioned changes.
 ## Playoff operations
 
 - The weekend afternoon timer covers early weekend tips; the daily pregame timer
-  covers early weekday playoff tips. The evening timer remains the fallback.
+  fires once at 10:00 ET and the pipeline waits until ~75 minutes before the
+  earliest tip. Each capture writes its own `forecast_board_{date}_{slot}_{snapshot}.json`
+  file, so retries never overwrite earlier captures. The evening timer remains
+  the fallback.
 - Set `WNBA_SEASON_PHASE=playoff` in `~/.config/wnba_props/env`.
 - Before each round, confirm every scheduled game is captured before tip and
   that player logs include the newest playoff game (a nonempty regular-season
