@@ -32,6 +32,7 @@ from wnba_props.ledger import (
     VOID,
     WIN,
     append_rows,
+    latest_rows,
     load_rows,
     roi_summary,
     settle_rows,
@@ -182,6 +183,53 @@ class LedgerTests(unittest.TestCase):
             self.assertEqual(rows[0]["price"], -115)
             self.assertEqual(rows[0]["run_id"], "forecast-2026-06-01-evening")
 
+    def test_later_published_snapshot_supersedes_settled_preflight(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ledger.jsonl"
+            preflight = {
+                "snapshot_id": "run-1-20260913T0204Z",
+                "run_id": "forecast-2026-09-17-evening",
+                "proposition_id": "PTS:a:2026-09-17:20.5",
+                "market": "PTS",
+                "subject": "A",
+                "game_date": "2026-09-17",
+                "price": -110,
+                "outcome": PENDING,
+                "captured_at": "2026-09-13T02:04:43+00:00",
+            }
+            published = dict(
+                preflight,
+                snapshot_id="run-1-20260917T2247Z",
+                captured_at="2026-09-17T22:47:13+00:00",
+                price=-115,
+            )
+            append_rows(path, [preflight])
+            settle_rows(path, {"PTS:a:2026-09-17:20.5": (WIN, 0.91)})
+
+            self.assertEqual(append_rows(path, [published]), 1)
+
+            rows = load_rows(path)
+            self.assertEqual(len(rows), 2)
+            superseded = [r for r in rows if r.get("superseded_by")]
+            self.assertEqual(len(superseded), 1)
+            self.assertEqual(superseded[0]["outcome"], WIN)
+            latest = latest_rows(rows)
+            self.assertEqual(len(latest), 1)
+            self.assertEqual(latest[0]["price"], -115)
+            self.assertEqual(latest[0]["outcome"], PENDING)
+
+    def test_exact_snapshot_duplicate_is_idempotent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ledger.jsonl"
+            row = {
+                "snapshot_id": "snap-1",
+                "run_id": "run-1",
+                "proposition_id": "p1",
+                "outcome": PENDING,
+            }
+            self.assertEqual(append_rows(path, [row]), 1)
+            self.assertEqual(append_rows(path, [dict(row)]), 0)
+
     def test_settled_row_is_frozen(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "ledger.jsonl"
@@ -239,6 +287,28 @@ class BoardTests(unittest.TestCase):
             payload = json.loads(board_path.read_text())
             self.assertEqual(payload["screen_date"], "2026-06-01")
             self.assertEqual(len(load_rows(ledger_path)), 1)
+
+    def test_ledger_rows_carry_snapshot_phase_and_market_detail(self) -> None:
+        board = assemble_board(
+            screen_date="2026-06-01",
+            run_id="run-1",
+            slot="pregame",
+            snapshot_id="snap-abc",
+            phase="playoff",
+            prop_forecasts=[_prop_forecast()],
+        )
+        row = board.ledger_rows[0]
+        self.assertEqual(board.snapshot_id, "snap-abc")
+        self.assertEqual(board.phase, "playoff")
+        self.assertEqual(row["snapshot_id"], "snap-abc")
+        self.assertEqual(row["phase"], "playoff")
+        self.assertEqual(row["slot"], "pregame")
+        self.assertIn("over_probability", row)
+        self.assertIn("under_probability", row)
+        self.assertIn("projected_minutes", row)
+        self.assertEqual(row["over_odds"], -110)
+        self.assertEqual(row["under_odds"], -110)
+        self.assertTrue(row["paper_play"])
 
     def test_proposition_id(self) -> None:
         self.assertEqual(
@@ -401,6 +471,10 @@ class IntegrationTests(unittest.TestCase):
         board = build_daily_board(
             screen_date="2026-06-01",
             run_id="run-x",
+            snapshot_id="snap-integration",
+            phase="regular",
+            market_weight=0.5,
+            ev_selection=True,
             slate=[
                 Game(
                     "evt-1",
@@ -433,6 +507,18 @@ class IntegrationTests(unittest.TestCase):
         self.assertIn("Points", board.sections)
         self.assertEqual(board.summary["prop_rows"], 1)
         self.assertGreaterEqual(board.summary["game_rows"], 3)
+        prop_row = next(
+            row for row in board.ledger_rows if row["market"] == "PTS"
+        )
+        self.assertEqual(prop_row["snapshot_id"], "snap-integration")
+        self.assertEqual(prop_row["phase"], "regular")
+        self.assertIn("over_probability", prop_row)
+        self.assertEqual(prop_row["market_blend_weight"], 0.5)
+        total_row = next(
+            row for row in board.ledger_rows if row["market"] == "TOTAL"
+        )
+        self.assertIsNotNone(total_row["over_probability"])
+        self.assertEqual(total_row["market_blend_weight"], 0.5)
 
 
 class LedgerGradingTests(unittest.TestCase):
@@ -471,15 +557,17 @@ class LedgerGradingTests(unittest.TestCase):
         from grade_forecast_board import _summarize
 
         rows = [
-            {"market": "ML", "outcome": WIN, "units": 0.91},
-            {"market": "ML", "outcome": LOSS, "units": -1.0},
-            {"market": "PTS", "outcome": PUSH, "units": 0.0},
-            {"market": "PTS", "outcome": PENDING, "units": None},
+            {"market": "ML", "outcome": WIN, "units": 0.91, "paper_play": True},
+            {"market": "ML", "outcome": LOSS, "units": -1.0, "paper_play": False},
+            {"market": "PTS", "outcome": PUSH, "units": 0.0, "paper_play": False},
+            {"market": "PTS", "outcome": PENDING, "units": None, "paper_play": False},
         ]
         summary = _summarize(rows)
         self.assertEqual(summary["overall"]["wins"], 1)
         self.assertEqual(summary["overall"]["losses"], 1)
         self.assertEqual(summary["pending"], 1)
+        self.assertEqual(summary["paper_play"]["plays"], 1)
+        self.assertEqual(summary["paper_play"]["wins"], 1)
 
         from wnba_props.notifiers.forecast_discord import render_recap
 
@@ -521,6 +609,29 @@ class SplitRecapTests(unittest.TestCase):
             title="WNBA Team Recap",
         )
         self.assertIn("WNBA Team Recap - 2026-09-17", text)
+
+
+class PlayoffPhaseTests(unittest.TestCase):
+    def test_playoff_recap_titles(self) -> None:
+        from grade_forecast_board import _recap_titles
+
+        overall, team, player = _recap_titles("playoff")
+        self.assertEqual(overall, "WNBA Playoff Recap")
+        self.assertEqual(team, "WNBA Team Playoff Recap")
+        self.assertEqual(player, "WNBA Player Props Playoff Recap")
+        self.assertEqual(_recap_titles("regular")[0], "WNBA Forecast Recap")
+
+    def test_phase_summary_separates_regular_and_playoff(self) -> None:
+        from grade_forecast_board import _phase_summary
+
+        rows = [
+            {"phase": "regular", "market": "ML", "outcome": WIN, "units": 0.9},
+            {"phase": "playoff", "market": "PTS", "outcome": LOSS, "units": -1.0},
+        ]
+        summary = _phase_summary(rows, "regular")
+        self.assertIn("regular", summary)
+        self.assertIn("playoff", summary)
+        self.assertEqual(summary["playoff"]["overall"]["losses"], 1)
 
 
 class PositionalFeatureTests(unittest.TestCase):

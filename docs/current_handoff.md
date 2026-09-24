@@ -1,6 +1,6 @@
 # WNBA forecast project handoff
 
-Last verified: 2026-09-12, America/Detroit
+Last verified: 2026-09-23, America/Detroit
 
 ## Current topology (Linux only)
 
@@ -10,12 +10,13 @@ Last verified: 2026-09-12, America/Detroit
   `~/wnba_props` on `main`. Scheduled through systemd **user timers**
   (`scripts/run_linux_task.sh` + `~/.config/systemd/user/sports-wnba-*.timer`).
 - Secrets live in `~/.config/wnba_props/env` (mode 600), including
-  `WNBA_PROPS_DISCORD_WEBHOOK_URL` and optionally the team/player webhooks.
+  `WNBA_PROPS_DISCORD_WEBHOOK_URL` for the team/operations channel and
+  `WNBA_PROPS_PLAYER_DISCORD_WEBHOOK_URL` for player props.
 - Pull VM outputs to the Mac with `scripts/sync_from_vm.sh` (history, health,
   logs, forecast boards, ledger, grades; pull-only, secrets never move).
 
-There is **no Windows or macOS scheduler**. Historical Windows/macOS task
-wrappers have been removed; do not recreate them.
+There is **no Windows deployment and no macOS scheduler**. Historical wrappers
+have been removed; do not recreate them.
 
 ## Production system
 
@@ -26,7 +27,7 @@ flat-unit ROI.
 ```text
 ESPN slate + point-in-time logs/injuries
         +
-Bovada game markets (primary) / Polymarket (fallback reference)
+Bovada game markets (preferred when reachable) / Polymarket (fallback reference)
         +
 PlayerProps.ai player lines
         -> versioned artifacts (frozen)
@@ -35,12 +36,24 @@ PlayerProps.ai player lines
         -> Discord (optional) + grading recap
 ```
 
-- **Game model:** logistic winner + ridge margin/total on team form features.
+- **Game model:** logistic winner + ridge margin/total on team form features,
+  with optional no-vig market blending and EV-aware side selection.
 - **Props:** minutes x rate simulation from joint residual artifacts per
   PTS/REB/AST/3PM, with league-baseline opponent adjustment, an opponent
   positional (G/F/C) allowance blend, a game-environment (expected total) rate
   factor capped at ±5%, and a role/status DNP probability surfaced as a risk
   flag.
+- **Decision layer:** `MARKET_BLEND_WEIGHT` (default 0.0 = off) shrinks final
+  probabilities toward the no-vig market; `EV_SIDE_SELECTION` (default false)
+  chooses the better-EV side. These are versioned candidate settings: validate
+  by replay before enabling, then record them with each comparison.
+- **Playoff phase:** set `WNBA_SEASON_PHASE=playoff` to label grading artifacts,
+  cumulative `outputs/grades/phase_summary.json`, and Discord recaps separately
+  from the regular season. The pipeline continues as one system across phases.
+- **Ledger integrity:** each capture carries a `snapshot_id` and `phase`.
+  Earlier captures remain for audit; grading and ROI use the latest capture per
+  `game_date/market/subject`. A later capture cannot inherit an earlier settled
+  result.
 - **Position map:** `config/player_positions.json` (regenerate with
   `scripts/fetch_player_positions.py`); unknown positions fall back to
   team-level allowance.
@@ -57,9 +70,10 @@ PlayerProps.ai player lines
   (`MIN_EVENT_MATCH_RATIO`, `MIN_PLAYER_LOAD_RATIO`, `MIN_EVALUATED_LINES`,
   `MAX_LINE_AGE_MINUTES`). A degraded board is withheld; Discord receives a
   DEGRADED alert instead.
-- **Ledger:** one row per `game_date/market/subject`; the later slot supersedes
-  the earlier pending snapshot and settled rows are frozen, so each play grades
-  once.
+- **Ledger:** every capture is retained with `snapshot_id` and `phase`. The
+  latest capture per `game_date/market/subject` is the official evaluation row;
+  pending rows can be replaced, and a genuinely later capture of a settled
+  identity is appended with the older row marked `superseded_by`.
 - **Grader:** `grade_forecast_board.py` defaults to **yesterday** (the 06:17
   timer runs the morning after), settles flat units, and posts a recap.
 
@@ -68,6 +82,7 @@ PlayerProps.ai player lines
 | Unit | When | Runs |
 | --- | --- | --- |
 | `sports-wnba-forecast@afternoon.timer` | Sat/Sun 12:36 | `run_forecast_pipeline.py --slot afternoon --send-discord` |
+| `sports-wnba-forecast@pregame.timer` | daily 11,13,15,17 | `run_forecast_pipeline.py --slot pregame --send-discord` |
 | `sports-wnba-forecast@evening.timer` | daily 18:45 | `run_forecast_pipeline.py --slot evening --send-discord` |
 | `sports-wnba-forecast-grade.timer` | daily 06:17 | `grade_forecast_board.py --send-discord` |
 
@@ -77,28 +92,44 @@ Legacy timers (`sports-wnba-daily`, `sports-wnba-shadow-capture`,
 
 ## Source reality on the VM
 
-Bovada blocks the Azure datacenter IP with a 302 redirect loop, so the VM
-currently builds game markets from **Polymarket** while Bovada remains primary
-where reachable. Discord labels the board `Game prices: Polymarket reference`
-in that case. Do not read VM ROI as executable Bovada ROI.
+Bovada access from the Azure VM has been intermittent: earlier runs hit a 302
+redirect loop, while the latest smoke run reached Bovada successfully. The
+pipeline falls back to **Polymarket** when Bovada fails and labels the board
+`Game prices: Polymarket reference` in that case. Do not read VM ROI as
+executable Bovada ROI when Polymarket is the source.
 
 ## Season operating plan
 
-Let the system run for the remainder of the regular season as a live
-paper-betting experiment. Do not reject the model or add shadow mode.
+The system is one evolving pipeline, not separate regular-season and playoff
+models. It continues through the postseason with versioned changes.
 
-- Keep the deployed model version **frozen** long enough to measure honestly;
-  do not refit after every slate.
-- Review weekly: calibration, units/ROI by market, PTS/REB/AST/3PM vs
-  ML/spread/total, `health=ok` rate, missing/stale-source counts, and
-  Polymarket-primary frequency.
-- Iterate in versioned batches: one change, refit, offline compare, deploy only
-  after confirming no leakage or pipeline regression.
-- Prioritized model improvements: active/DNP probability (v1 shipped: role/status
-  DNP flag), minutes/role modeling (v1 shipped: starter probability feeds DNP),
-  team opponent adjustment (shipped), opponent positional defense (v1 shipped),
-  prop-specific uncertainty calibration, source-quality separation (sportsbook
-  vs reference price).
+- Regular-season review found the ledger was not a faithful board record for
+  Sep. 17: 50 preflight rows were captured Sep. 13, and 43 current board rows
+  were shadowed by their proposition IDs. The official regular-season view must
+  come from the latest board capture per identity, reconciled with
+  `scripts/reconcile_forecast_ledger.py`.
+- Use `scripts/evaluate_forecast_diagnostics.py` for latest-capture calibration
+  and ROI by phase, market, side, and value label.
+- Set `WNBA_SEASON_PHASE=playoff` for postseason runs. Grading writes
+  `outputs/grades/phase_summary.json` and uses playoff recap titles.
+- Iterate in versioned batches: one change, offline/walk-forward replay, deploy
+  only after confirming no leakage or pipeline regression. Stamp each snapshot
+  with the config changes that produced it.
+- Prioritized improvements: minutes/role modeling (per-team and game-script
+  context), prop-specific probability calibration (PTS and 3PM first),
+  EV-aware side selection with no-vig market blend, 3PM shot-volume distribution,
+  and team margin/total uncertainty with lineup/injury context.
+- Capture both prices and raw PlayerProps payloads for every slate so future
+  market comparisons are exact.
+
+## Playoff operations
+
+- The weekend afternoon timer covers early weekend tips; the daily pregame timer
+  covers early weekday playoff tips. The evening timer remains the fallback.
+- Set `WNBA_SEASON_PHASE=playoff` in `~/.config/wnba_props/env`.
+- Before each round, confirm every scheduled game is captured before tip and
+  that player logs include the newest playoff game (a nonempty regular-season
+  log must not suppress the ESPN fallback in playoff phase).
 
 ## Historical context (legacy screener, retired)
 

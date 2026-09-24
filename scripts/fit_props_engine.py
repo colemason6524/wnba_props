@@ -187,11 +187,29 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--log-dir", type=Path, default=DEFAULT_LOG_DIR)
     parser.add_argument("--artifact-dir", type=Path, default=DEFAULT_ARTIFACT_DIR)
+    parser.add_argument(
+        "--min-latest-date",
+        default=None,
+        help="Fail unless the newest log date is at least this YYYY-MM-DD date.",
+    )
     args = parser.parse_args()
 
     logs = load_logs(args.log_dir)
     if not logs:
         raise SystemExit(f"no logs found under {args.log_dir}")
+
+    latest_log_date = max(log.game_date for log in logs)
+    print(
+        f"logs={len(logs)} players={len({log.player_name_norm for log in logs})} "
+        f"latest={latest_log_date.isoformat()} dir={args.log_dir}"
+    )
+    if args.min_latest_date:
+        minimum = date.fromisoformat(args.min_latest_date)
+        if latest_log_date < minimum:
+            raise SystemExit(
+                f"latest log date {latest_log_date} is older than required "
+                f"{minimum}; refresh the log directory before fitting"
+            )
 
     feature_rows = build_player_feature_table(logs=logs, prop_types=PROP_TYPES)
     actual_lookup = _actual_lookup(logs)
@@ -204,6 +222,8 @@ def main() -> int:
         observations = build_prop_observations(rows, actual_lookup)
         report = fit_prop_artifact(prop_type, observations, args.artifact_dir)
         if report is not None:
+            report["latest_log_date"] = latest_log_date.isoformat()
+            report["log_dir"] = str(args.log_dir)
             reports.append(report)
             print(report)
 

@@ -14,6 +14,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from datetime import date, datetime, timedelta, timezone
@@ -68,6 +69,46 @@ SCOREBOARD_URL = (
 
 def _run_id(screen_date: str, slot: str) -> str:
     return f"forecast-{screen_date}-{slot}"
+
+
+def _latest_log_date(logs) -> date | None:
+    if not logs:
+        return None
+    return max(log.game_date for log in logs)
+
+
+def _player_logs_stale(screen_date: date, logs, *, phase: str) -> bool:
+    """Playoff guard: a nonempty but stale regular-season log is not enough."""
+    if phase != "playoff":
+        return False
+    latest = _latest_log_date(logs)
+    if latest is None:
+        return True
+    return latest < screen_date - timedelta(days=2)
+
+
+def _player_logs_newer(fallback_logs, logs) -> bool:
+    fallback_latest = _latest_log_date(fallback_logs)
+    current_latest = _latest_log_date(logs)
+    if fallback_latest is None:
+        return False
+    return current_latest is None or fallback_latest > current_latest
+
+
+def _config_fingerprint(settings) -> str:
+    payload = {
+        "supported_prop_types": sorted(settings.supported_prop_types),
+        "playerprops_book": settings.playerprops_book,
+        "market_blend_weight": settings.market_blend_weight,
+        "ev_side_selection": settings.ev_side_selection,
+        "season_phase": settings.season_phase,
+        "min_event_match_ratio": settings.min_event_match_ratio,
+        "min_player_load_ratio": settings.min_player_load_ratio,
+        "max_line_age_minutes": settings.max_line_age_minutes,
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True).encode("utf-8")
+    ).hexdigest()
 
 
 def _load_team_results(screen_date: date) -> list:
@@ -137,11 +178,17 @@ def _collect_player_logs(settings, games, prop_lines, shared_cache, injuries_cac
             logs = logs_source.fetch_logs(line.player_name_raw, line.team, season)
         except Exception:  # noqa: BLE001
             logs = []
-        if not logs:
+        if not logs or _player_logs_stale(
+            settings.screen_date, logs, phase=settings.season_phase
+        ):
             try:
-                logs = fallback.fetch_logs(line.player_name_raw, line.team, season)
+                fallback_logs = fallback.fetch_logs(
+                    line.player_name_raw, line.team, season
+                )
             except Exception:  # noqa: BLE001
-                logs = []
+                fallback_logs = []
+            if fallback_logs and _player_logs_newer(fallback_logs, logs):
+                logs = fallback_logs
         if logs:
             logs_by_player[key] = logs
 
@@ -165,6 +212,7 @@ def run_pipeline(
     settings = load_settings()
     settings.screen_date = date.fromisoformat(screen)
     run_id = _run_id(screen, slot)
+    snapshot_id = f"{run_id}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
 
     shared_cache = JsonCache(CACHE_DIR / "shared", ttl_hours=settings.cache_ttl_hours)
     lines_cache = JsonCache(CACHE_DIR / "lines", ttl_hours=settings.lines_cache_ttl_minutes / 60.0)
@@ -248,6 +296,11 @@ def run_pipeline(
     print("[pipeline] stage=board")
     provenance = {
         "run_id": run_id,
+        "snapshot_id": snapshot_id,
+        "phase": settings.season_phase,
+        "market_blend_weight": settings.market_blend_weight,
+        "ev_side_selection": settings.ev_side_selection,
+        "config_hash": _config_fingerprint(settings),
         "slot": slot,
         "screen_date": screen,
         "code_commit": code_commit(),
@@ -255,6 +308,10 @@ def run_pipeline(
         "artifacts": bundle.versions(),
         "game_market_coverage": market_diags.get("coverage", {}),
         "line_source": settings.line_source,
+        "line_source_snapshot": getattr(line_source, "raw_snapshot_path", ""),
+        "line_source_snapshot_sha256": getattr(
+            line_source, "raw_snapshot_sha256", ""
+        ),
         "bookmaker": settings.playerprops_book,
         "player_logs_loaded": len(logs_by_player),
         "injuries_by_team": {team: len(items) for team, items in team_injuries.items()},
@@ -273,6 +330,10 @@ def run_pipeline(
         screen_date=screen,
         run_id=run_id,
         slot=slot,
+        snapshot_id=snapshot_id,
+        phase=settings.season_phase,
+        market_weight=settings.market_blend_weight,
+        ev_selection=settings.ev_side_selection,
         slate=games,
         prop_lines=prop_lines,
         league_logs=league_logs,
@@ -416,7 +477,11 @@ def _send_discord(
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the atomic WNBA forecast pipeline.")
-    parser.add_argument("--slot", default="evening", choices=("morning", "afternoon", "evening"))
+    parser.add_argument(
+        "--slot",
+        default="evening",
+        choices=("morning", "afternoon", "pregame", "evening"),
+    )
     parser.add_argument("--date", default=None, help="Screen date YYYY-MM-DD; defaults to today.")
     parser.add_argument("--send-discord", action="store_true")
     parser.add_argument("--force-send", action="store_true")

@@ -35,6 +35,8 @@ class ForecastBoard:
     screen_date: str
     run_id: str
     slot: str = ""
+    snapshot_id: str = ""
+    phase: str = "regular"
     sections: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     ledger_rows: list[dict[str, Any]] = field(default_factory=list)
     summary: dict[str, Any] = field(default_factory=dict)
@@ -48,6 +50,8 @@ def build_game_rows(
     forecasts: Sequence[GameForecast],
     *,
     run_id: str,
+    snapshot_id: str = "",
+    phase: str = "regular",
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     rows: list[dict[str, Any]] = []
     ledger: list[dict[str, Any]] = []
@@ -91,6 +95,14 @@ def build_game_rows(
                 projection=None,
                 source=forecast.moneyline_source,
                 captured_at=forecast.captured_at,
+                snapshot_id=snapshot_id,
+                phase=phase,
+                details={
+                    "home_probability": forecast.p_home,
+                    "away_probability": forecast.p_away,
+                    "home_moneyline": forecast.home_moneyline,
+                    "away_moneyline": forecast.away_moneyline,
+                },
             )
         )
 
@@ -137,6 +149,15 @@ def build_game_rows(
                     projection=forecast.margin_projection,
                     source=forecast.spread_source,
                     captured_at=forecast.captured_at,
+                    snapshot_id=snapshot_id,
+                    phase=phase,
+                    details={
+                        "home_spread_probability": forecast.home_spread_probability,
+                        "away_spread_probability": forecast.away_spread_probability,
+                        "spread_push_probability": forecast.spread_push_probability,
+                        "home_spread_price": forecast.spread_home_price,
+                        "away_spread_price": forecast.spread_away_price,
+                    },
                 )
             )
 
@@ -173,6 +194,16 @@ def build_game_rows(
                     projection=forecast.total_projection,
                     source=forecast.total_source,
                     captured_at=forecast.captured_at,
+                    snapshot_id=snapshot_id,
+                    phase=phase,
+                    details={
+                        "over_probability": forecast.over_probability,
+                        "under_probability": forecast.under_probability,
+                        "push_probability": forecast.total_push_probability,
+                        "over_price": forecast.over_price,
+                        "under_price": forecast.under_price,
+                        "market_blend_weight": forecast.market_blend_weight,
+                    },
                 )
             )
 
@@ -183,6 +214,8 @@ def build_prop_rows(
     forecasts: Sequence[PropForecast],
     *,
     run_id: str,
+    snapshot_id: str = "",
+    phase: str = "regular",
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     rows: list[dict[str, Any]] = []
     ledger: list[dict[str, Any]] = []
@@ -212,6 +245,8 @@ def build_prop_rows(
         )
         ledger.append(
             {
+                "snapshot_id": snapshot_id,
+                "phase": phase,
                 "run_id": run_id,
                 "proposition_id": proposition_id(
                     forecast.prop_type,
@@ -229,12 +264,28 @@ def build_prop_rows(
                 "projection": round(forecast.projected_mean, 2),
                 "ev": None if forecast.ev is None else round(forecast.ev, 4),
                 "value": forecast.value_label,
+                "paper_play": forecast.value_label == "playable",
                 "source": forecast.market_source,
                 "captured_at": forecast.captured_at,
                 "dnp_probability": forecast.dnp_probability,
                 "outcome": PENDING if forecast.price is not None else UNPRICED,
                 "units": None,
                 "graded": False,
+                "over_probability": round(forecast.over_probability, 4),
+                "under_probability": round(forecast.under_probability, 4),
+                "push_probability": round(forecast.push_probability, 4),
+                "over_odds": forecast.over_odds,
+                "under_odds": forecast.under_odds,
+                "over_ev": None if forecast.over_ev is None else round(forecast.over_ev, 4),
+                "under_ev": None if forecast.under_ev is None else round(forecast.under_ev, 4),
+                "market_over_probability": forecast.market_over_probability,
+                "market_blend_weight": forecast.market_blend_weight,
+                "projected_minutes": forecast.projected_minutes,
+                "projected_rate": forecast.projected_rate,
+                "percentile_10": forecast.percentile_10,
+                "percentile_90": forecast.percentile_90,
+                "void_probability": forecast.void_probability,
+                "flags": list(forecast.flags),
             }
         )
     return rows, ledger
@@ -245,18 +296,26 @@ def assemble_board(
     screen_date: str,
     run_id: str,
     slot: str = "",
+    snapshot_id: str = "",
+    phase: str = "regular",
     game_forecasts: Sequence[GameForecast] = (),
     prop_forecasts: Sequence[PropForecast] = (),
     provenance: Optional[Mapping[str, Any]] = None,
 ) -> ForecastBoard:
-    game_rows, game_ledger = build_game_rows(game_forecasts, run_id=run_id)
-    prop_rows, prop_ledger = build_prop_rows(prop_forecasts, run_id=run_id)
+    game_rows, game_ledger = build_game_rows(
+        game_forecasts, run_id=run_id, snapshot_id=snapshot_id, phase=phase
+    )
+    prop_rows, prop_ledger = build_prop_rows(
+        prop_forecasts, run_id=run_id, snapshot_id=snapshot_id, phase=phase
+    )
 
     sections: dict[str, list[dict[str, Any]]] = {}
     for row in list(game_rows) + list(prop_rows):
         sections.setdefault(row["section"], []).append(row)
 
     ledger_rows = game_ledger + prop_ledger
+    for row in ledger_rows:
+        row.setdefault("slot", slot)
     priced = [row for row in ledger_rows if row["price"] is not None]
     favorable = [row for row in ledger_rows if row["value"] == "playable"]
 
@@ -264,6 +323,8 @@ def assemble_board(
         screen_date=screen_date,
         run_id=run_id,
         slot=slot,
+        snapshot_id=snapshot_id,
+        phase=phase,
         sections=sections,
         ledger_rows=ledger_rows,
         summary={
@@ -282,6 +343,10 @@ def build_daily_board(
     screen_date: str,
     run_id: str,
     slot: str = "",
+    snapshot_id: str = "",
+    phase: str = "regular",
+    market_weight: float = 0.0,
+    ev_selection: bool = False,
     slate: Sequence[Game] = (),
     prop_lines: Sequence[PropLine] = (),
     league_logs: Sequence[PlayerGameLog] = (),
@@ -344,6 +409,8 @@ def build_daily_board(
                     spread_source=getattr(snap, "spread_source", "") or "",
                     total_source=getattr(snap, "total_source", "") or "",
                     captured_at=getattr(snap, "captured_at", "") or "",
+                    market_weight=market_weight,
+                    ev_selection=ev_selection,
                 )
             )
 
@@ -385,6 +452,8 @@ def build_daily_board(
             game_total=total_by_team.get(line.team),
             game_total_baseline=league_game_total,
             simulations=simulations,
+            market_weight=market_weight,
+            ev_selection=ev_selection,
         )
         if forecast is not None:
             prop_forecasts.append(forecast)
@@ -393,6 +462,8 @@ def build_daily_board(
         screen_date=screen_date,
         run_id=run_id,
         slot=slot,
+        snapshot_id=snapshot_id,
+        phase=phase,
         game_forecasts=game_forecasts,
         prop_forecasts=prop_forecasts,
         provenance=provenance,
@@ -505,8 +576,13 @@ def _ledger_row(
     projection: Optional[float] = None,
     source: str = "",
     captured_at: str = "",
+    snapshot_id: str = "",
+    phase: str = "regular",
+    details: Optional[Mapping[str, Any]] = None,
 ) -> dict[str, Any]:
-    return {
+    row = {
+        "snapshot_id": snapshot_id,
+        "phase": phase,
         "run_id": run_id,
         "proposition_id": proposition_id(market, subject, game_date, line),
         "market": market,
@@ -520,12 +596,16 @@ def _ledger_row(
         "projection": None if projection is None else round(projection, 2),
         "ev": None if ev is None else round(ev, 4),
         "value": value,
+        "paper_play": value == "playable",
         "source": source,
         "captured_at": captured_at,
         "outcome": PENDING if price is not None else UNPRICED,
         "units": None,
         "graded": False,
     }
+    if details:
+        row.update(dict(details))
+    return row
 
 
 def _format_signed(value: float) -> str:

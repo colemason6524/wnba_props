@@ -188,6 +188,50 @@ class PriceIndependenceTests(unittest.TestCase):
         self.assertNotEqual(first.ev, second.ev)
 
 
+class MarketAwareDecisionTests(unittest.TestCase):
+    def _line(self, over: int, under: int) -> PropLine:
+        return PropLine(
+            event_id="evt",
+            game_date=date(2026, 6, 10),
+            player_name_raw="Test Player",
+            player_name_norm="test player",
+            team="NY",
+            opponent="PHX",
+            prop_type="PTS",
+            line=20.5,
+            bookmaker="fanduel",
+            source="fixture",
+            collected_at=datetime(2026, 6, 10, 15, 0, tzinfo=timezone.utc),
+            over_odds=over,
+            under_odds=under,
+        )
+
+    def test_pick_side_respects_ev_when_enabled(self) -> None:
+        from wnba_props.modeling.props_forecast import _pick_side
+
+        side, probability = _pick_side(0.60, 0.40, 0.0, -0.20, 0.30, True)
+        self.assertEqual(side, "UNDER")
+        self.assertAlmostEqual(probability, 0.40)
+
+    def test_market_blend_moves_probability_toward_no_vig(self) -> None:
+        from wnba_props.modeling.props_forecast import forecast_prop
+
+        artifact = _artifact(pairs=((0.0, 0.0),) * 50)
+        plain = forecast_prop(features=_features(), line=self._line(-110, -110), residuals=artifact)
+        blended = forecast_prop(
+            features=_features(),
+            line=self._line(-110, -110),
+            residuals=artifact,
+            market_weight=0.5,
+        )
+        assert plain is not None and blended is not None
+        self.assertAlmostEqual(blended.market_over_probability or 0.0, 0.5)
+        self.assertAlmostEqual(
+            blended.over_probability,
+            0.5 * plain.over_probability + 0.5 * 0.5,
+        )
+
+
 class EnvironmentFactorTests(unittest.TestCase):
     def test_missing_total_is_neutral(self) -> None:
         self.assertEqual(game_environment_factor(None), 1.0)

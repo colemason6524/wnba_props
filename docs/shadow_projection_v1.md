@@ -1,4 +1,8 @@
-# WNBA points projection shadow v1
+# Historical WNBA points projection shadow v1
+
+> Historical research record only. This shadow system is retired, not deployed,
+> and not part of the current Linux production schedule. The Windows references
+> below describe the old 2026 research environment and are not instructions.
 
 This is a research-only challenger to the existing daily screener. It does not replace or modify the nightly runner, heuristic screener, Discord policy, scheduled-task scripts, or normal `screen_run_*.json` exports.
 
@@ -58,7 +62,10 @@ SHADOW_LINE_SOURCE=manual python3 run_projection_shadow.py
 
 `--include-started` remains available only for engineering smoke tests. Those snapshots retain their capture timestamp but are excluded from the strict pregame rollup.
 
-The command is intentionally not part of the production Windows scheduled task. It was deployed on August 5, 2026 to a separate shadow checkout and separate shadow tasks. Discord delivery is not part of the collection design.
+The command was intentionally isolated from the old production scheduled task.
+It was deployed on August 5, 2026 to a separate shadow checkout and separate
+shadow tasks. Discord delivery was not part of the collection design. The
+shadow deployment is now retired.
 
 ## Grade a completed snapshot
 
@@ -96,9 +103,9 @@ The rollup compares model MAE and Brier score with the sportsbook line and no-vi
 
 The collection gate remains `COLLECTING` until it has at least 7 slates, 20 games, 100 strict pregame projections, and 90% both-side price coverage. `READY_FOR_REVIEW` means only that the sample is large enough for review; it does not establish betting edge.
 
-## Windows deployment and current blocker
+## Retired historical deployment
 
-The isolated deployment is:
+The former isolated deployment was:
 
 - checkout: `C:\Users\muski\wnba_props_shadow`
 - branch: `codex/wnba-shadow-collection`
@@ -111,7 +118,7 @@ Two shadow-only PowerShell scripts back those tasks:
 - `scripts/run_wnba_shadow_capture_task.ps1` runs only the strict pregame collector and writes `outputs/logs/wnba_shadow_capture.log`.
 - `scripts/run_wnba_shadow_grade_task.ps1` grades all pending snapshots, rebuilds the rollup, and writes `outputs/logs/wnba_shadow_grade.log`.
 
-The deployment is isolated from `WNBA Props Daily`.
+The deployment was isolated from `WNBA Props Daily` and is no longer scheduled.
 
 ## Evidence audit record (August 21, 2026)
 

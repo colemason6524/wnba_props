@@ -14,6 +14,7 @@ outputs/shadow-vm/
 outputs/forecast_boards/
 outputs/grades/
 outputs/ledger/
+outputs/source_snapshots/
 outputs/*.tar.gz
 outputs/*.zip
 .env

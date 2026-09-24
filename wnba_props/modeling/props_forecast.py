@@ -9,7 +9,12 @@ from ..models import PropLine
 from .calibration import ResidualArtifact
 from .minutes import MinutesProjection, project_minutes, simulate_prop
 from .rates import LEAGUE_GAME_TOTAL_BASELINE, project_rate
-from .value import expected_value_with_push, value_label
+from .value import (
+    blend_non_push,
+    expected_value_with_push,
+    no_vig_probabilities,
+    value_label,
+)
 
 
 @dataclass(frozen=True)
@@ -42,6 +47,10 @@ class PropForecast:
     captured_at: str = ""
     dnp_probability: float = 0.0
     void_probability: float = 0.0
+    market_over_probability: Optional[float] = None
+    over_ev: Optional[float] = None
+    under_ev: Optional[float] = None
+    market_blend_weight: float = 0.0
 
 
 def forecast_prop(
@@ -55,6 +64,8 @@ def forecast_prop(
     game_total: Optional[float] = None,
     game_total_baseline: float = LEAGUE_GAME_TOTAL_BASELINE,
     simulations: int = 10_000,
+    market_weight: float = 0.0,
+    ev_selection: bool = False,
 ) -> Optional[PropForecast]:
     minutes = project_minutes(features, player_status=player_status)
     if minutes.availability_excluded:
@@ -77,16 +88,42 @@ def forecast_prop(
         seed_material=line.bookmaker,
     )
 
-    pick_side, pick_probability = _pick_side(simulation)
+    over_probability = simulation.over_probability
+    under_probability = simulation.under_probability
+    market_over_probability = None
+    if market_weight > 0.0:
+        market_over, market_under = no_vig_probabilities(
+            line.over_odds, line.under_odds
+        )
+        over_probability, under_probability = blend_non_push(
+            over_probability,
+            under_probability,
+            market_over,
+            market_under,
+            market_weight,
+        )
+        market_over_probability = market_over
+
+    over_ev = expected_value_with_push(
+        over_probability, under_probability, line.over_odds
+    )
+    under_ev = expected_value_with_push(
+        under_probability, over_probability, line.under_odds
+    )
+
+    pick_side, pick_probability = _pick_side(
+        over_probability,
+        under_probability,
+        simulation.push_probability,
+        over_ev,
+        under_ev,
+        ev_selection,
+    )
     if pick_side is None:
         return None
 
     price = line.over_odds if pick_side == "OVER" else line.under_odds
-    ev = expected_value_with_push(
-        p_win=simulation.over_probability if pick_side == "OVER" else simulation.under_probability,
-        p_loss=simulation.under_probability if pick_side == "OVER" else simulation.over_probability,
-        price=price,
-    )
+    ev = over_ev if pick_side == "OVER" else under_ev
 
     flags = _flags(features, minutes, pick_side)
 
@@ -101,8 +138,8 @@ def forecast_prop(
         bookmaker=line.bookmaker,
         pick_side=pick_side,
         pick_probability=pick_probability,
-        over_probability=simulation.over_probability,
-        under_probability=simulation.under_probability,
+        over_probability=over_probability,
+        under_probability=under_probability,
         push_probability=simulation.push_probability,
         projected_mean=simulation.projected_mean,
         projected_minutes=minutes.projected_minutes,
@@ -119,17 +156,30 @@ def forecast_prop(
         captured_at=line.collected_at.isoformat(),
         dnp_probability=round(minutes.dnp_probability, 4),
         void_probability=round(simulation.void_probability, 4),
+        market_over_probability=market_over_probability,
+        over_ev=over_ev,
+        under_ev=under_ev,
+        market_blend_weight=market_weight,
     )
 
 
-def _pick_side(simulation) -> tuple[Optional[str], float]:
-    if simulation.push_probability > max(
-        simulation.over_probability, simulation.under_probability
-    ):
+def _pick_side(
+    over_probability: float,
+    under_probability: float,
+    push_probability: float,
+    over_ev: Optional[float],
+    under_ev: Optional[float],
+    ev_selection: bool,
+) -> tuple[Optional[str], float]:
+    if push_probability > max(over_probability, under_probability):
         return None, 0.0
-    if simulation.over_probability >= simulation.under_probability:
-        return "OVER", simulation.over_probability
-    return "UNDER", simulation.under_probability
+    if ev_selection and over_ev is not None and under_ev is not None:
+        if under_ev > over_ev:
+            return "UNDER", under_probability
+        return "OVER", over_probability
+    if over_probability >= under_probability:
+        return "OVER", over_probability
+    return "UNDER", under_probability
 
 
 def _flags(

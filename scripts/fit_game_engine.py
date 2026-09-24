@@ -62,7 +62,7 @@ def load_team_results(
 ) -> list[TeamGameResult]:
     if results_path.exists():
         payload = json.loads(results_path.read_text())
-        return [
+        cached = [
             TeamGameResult(
                 game_date=date.fromisoformat(item["game_date"]),
                 team=item["team"],
@@ -73,6 +73,16 @@ def load_team_results(
             )
             for item in payload
         ]
+        filtered = [r for r in cached if start <= r.game_date <= end]
+        covered_through = max((r.game_date for r in filtered), default=None)
+        if covered_through is None or covered_through < end:
+            if not fetch:
+                raise SystemExit(
+                    f"cached team results at {results_path} only cover through "
+                    f"{covered_through}; rerun with --fetch to extend through {end}"
+                )
+        else:
+            return filtered
 
     if not fetch:
         raise SystemExit(

@@ -20,13 +20,19 @@ outcome distribution vs line and price
           -> calibrated probability, fair price, and research EV
 ```
 
-The current v1 implements a simplified form of this for points. It is a challenger baseline, not the endpoint.
+The current production forecast implements this pattern for team markets and
+PTS/REB/AST/3PM. The older points-only shadow projection is historical research
+and is not the production path.
 
-## Frozen v1 question
+## Current Evaluation Question
 
-Can a simple, leakage-safe minutes-times-rate simulation produce better calibrated PTS probabilities and point estimates than the offered line/no-vig market across prospectively captured WNBA slates?
+Can the frozen production forecast produce calibrated probabilities and positive
+paper ROI relative to the offered line/no-vig market across prospective WNBA
+slates, separately for team markets and player props?
 
-Do not change v1 while answering that question. Any meaningful feature, weighting, distribution, or selection change becomes a new model version and must be evaluated on later captures.
+Do not change the deployed version during the initial review window. Any
+meaningful feature, weighting, distribution, or selection change becomes a new
+model version and must be evaluated on later captures.
 
 ## Metrics that matter
 
@@ -89,7 +95,9 @@ These are hypotheses to investigate after v1 evidence exists, not changes to mak
 
 ### Operations
 
-- Interactive Windows tasks require the desktop to be powered on and the user logged in.
+- Production scheduling is Linux-only on the Azure VM. Historical Windows task
+  references belong to retired research infrastructure and are not operational
+  requirements.
 - Hourly scheduling provides theoretical coverage but does not guarantee capture after delay, network failure, missing lines, or task overlap.
 - The capture registry records success per game/model/source; partial-game capture behavior should be tested so a weak first artifact does not suppress a better eligible retry.
 - Monitoring should distinguish no games, outside window, no lines, partial projection coverage, process failure, and successful artifact creation.
@@ -104,4 +112,3 @@ No model should affect the daily system because it passed the collection gate or
 - robustness after excluding correlated games and high-leverage outliers;
 - an untouched future holdout for the exact proposed model version;
 - a separately approved integration plan with rollback and shadow parity.
-

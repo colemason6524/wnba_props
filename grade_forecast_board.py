@@ -29,6 +29,7 @@ from wnba_props.ledger import (
     UNPRICED,
     VOID,
     WIN,
+    latest_rows,
     load_rows,
     roi_summary,
     settle_rows,
@@ -157,8 +158,10 @@ def _summarize(rows: list[dict]) -> dict:
     for market, bucket in by_market.items():
         bucket["roi"] = round(bucket["units"] / bucket["plays"], 4) if bucket["plays"] else None
     pending = sum(1 for row in rows if row.get("outcome") in (PENDING, UNPRICED))
+    paper_rows = [row for row in rows if row.get("paper_play")]
     return {
         "overall": overall,
+        "paper_play": roi_summary(paper_rows),
         "by_market": by_market,
         "pending": pending,
     }
@@ -167,6 +170,29 @@ def _summarize(rows: list[dict]) -> dict:
 def _subset_summary(rows: list[dict], markets: tuple[str, ...]) -> dict:
     subset = [row for row in rows if str(row.get("market", "")) in markets]
     return _summarize(subset)
+
+
+def _phase_for_row(row: dict, default: str) -> str:
+    return str(row.get("phase") or default or "regular").lower()
+
+
+def _phase_summary(rows: list[dict], default_phase: str) -> dict:
+    """Cumulative summary by season phase, using only the latest capture."""
+    by_phase: dict[str, list[dict]] = {}
+    for row in latest_rows(rows):
+        phase = _phase_for_row(row, default_phase)
+        by_phase.setdefault(phase, []).append(row)
+    return {phase: _summarize(items) for phase, items in sorted(by_phase.items())}
+
+
+def _recap_titles(phase: str) -> tuple[str, str, str]:
+    if phase == "playoff":
+        return (
+            "WNBA Playoff Recap",
+            "WNBA Team Playoff Recap",
+            "WNBA Player Props Playoff Recap",
+        )
+    return "WNBA Forecast Recap", "WNBA Team Recap", "WNBA Player Props Recap"
 
 
 def grade_date(
@@ -180,7 +206,12 @@ def grade_date(
         print(f"[grade] no ledger at {FORECAST_LEDGER}", file=sys.stderr)
         return 1
 
-    rows = [row for row in load_rows(FORECAST_LEDGER) if row.get("game_date") == screen_date.isoformat()]
+    ledger_rows = load_rows(FORECAST_LEDGER)
+    rows = [
+        row
+        for row in latest_rows(ledger_rows)
+        if row.get("game_date") == screen_date.isoformat()
+    ]
     if not rows:
         print(f"[grade] no ledger rows for {screen_date.isoformat()}")
         return 0
@@ -199,28 +230,36 @@ def grade_date(
         results[proposition_id] = (outcome, units)
 
     updated = settle_rows(FORECAST_LEDGER, results)
+    ledger_rows = load_rows(FORECAST_LEDGER)
     graded_rows = [
         row
-        for row in load_rows(FORECAST_LEDGER)
+        for row in latest_rows(ledger_rows)
         if row.get("game_date") == screen_date.isoformat()
     ]
     summary = _summarize(graded_rows)
+    phase = _phase_for_row(graded_rows[0], settings.season_phase) if graded_rows else settings.season_phase
 
     GRADES_DIR.mkdir(parents=True, exist_ok=True)
     artifact = GRADES_DIR / f"forecast_grade_{screen_date.isoformat()}.json"
+    phase_summary = _phase_summary(ledger_rows, settings.season_phase)
     artifact.write_text(
         json.dumps(
             {
                 "screen_date": screen_date.isoformat(),
+                "phase": phase,
                 "graded_at": datetime.now(timezone.utc).isoformat(),
                 "updated_rows": updated,
                 "games_loaded": len(scores),
                 "players_loaded": len(player_stats),
                 "summary": summary,
+                "phase_summary": phase_summary,
             },
             indent=2,
             sort_keys=True,
         )
+    )
+    (GRADES_DIR / "phase_summary.json").write_text(
+        json.dumps(phase_summary, indent=2, sort_keys=True)
     )
     print(
         f"[grade] updated={updated} overall={summary['overall']['wins']}-"
@@ -235,8 +274,14 @@ def grade_date(
         split = bool(
             settings.discord_team_webhook_url or settings.discord_player_webhook_url
         )
+        overall_title, team_title, player_title = _recap_titles(phase)
         if not split or team_hook == player_hook:
-            result = send_recap(primary, screen_date=screen_date.isoformat(), summary=summary)
+            result = send_recap(
+                primary,
+                screen_date=screen_date.isoformat(),
+                summary=summary,
+                title=overall_title,
+            )
             if not result.ok:
                 print(f"[grade] discord recap failed: {result.error}", file=sys.stderr)
                 return 1
@@ -248,13 +293,13 @@ def grade_date(
                 team_hook,
                 screen_date=screen_date.isoformat(),
                 summary=team_summary,
-                title="WNBA Team Recap",
+                title=team_title,
             )
             player_result = send_recap(
                 player_hook,
                 screen_date=screen_date.isoformat(),
                 summary=player_summary,
-                title="WNBA Player Props Recap",
+                title=player_title,
             )
             if not team_result.ok or not player_result.ok:
                 error = team_result.error if not team_result.ok else player_result.error

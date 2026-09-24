@@ -131,6 +131,9 @@ class Settings:
     max_line_age_minutes: int = 240
     allow_degraded_discord: bool = False
     require_clean_tree: bool = True
+    market_blend_weight: float = 0.0
+    ev_side_selection: bool = False
+    season_phase: str = "regular"
 
 
 def _env_flag(name: str, default: bool) -> bool:
@@ -205,4 +208,8 @@ def load_settings() -> Settings:
         max_line_age_minutes=int(os.environ.get("MAX_LINE_AGE_MINUTES", "240")),
         allow_degraded_discord=_env_flag("WNBA_ALLOW_DEGRADED_DISCORD", False),
         require_clean_tree=_env_flag("WNBA_REQUIRE_CLEAN_TREE", True),
+        market_blend_weight=_env_float("MARKET_BLEND_WEIGHT", 0.0),
+        ev_side_selection=_env_flag("EV_SIDE_SELECTION", False),
+        season_phase=os.environ.get("WNBA_SEASON_PHASE", "regular").strip().lower()
+        or "regular",
     )

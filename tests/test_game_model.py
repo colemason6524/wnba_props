@@ -114,6 +114,39 @@ class GameForecastTests(unittest.TestCase):
         self.assertAlmostEqual(first.winner_probability, second.winner_probability)
         self.assertAlmostEqual(first.total_probability, second.total_probability)
 
+    def test_market_blend_and_ev_selection_are_optional(self) -> None:
+        engine = GameEngine(
+            winner=fit_logistic([[1.0], [-1.0]], [1, 0], l2=0.0, iterations=500),
+            margin=fit_ridge([[1.0], [-1.0]], [5.0, -5.0], l2=0.0),
+            total=fit_ridge([[1.0], [-1.0]], [170.0, 150.0], l2=0.0),
+        )
+        home = _team(team="NY", opponent="PHX", is_home=True, ppg=85, opp_ppg=78, margin=6)
+        away = _team(team="PHX", opponent="NY", is_home=False, ppg=78, opp_ppg=85, margin=-6)
+        market = GameMarket(
+            home_moneyline=-150,
+            away_moneyline=130,
+            home_spread=-3.5,
+            home_spread_price=-110,
+            away_spread_price=-110,
+            total_line=164.5,
+            over_price=-110,
+            under_price=-110,
+        )
+        plain = forecast_game(home=home, away=away, engine=engine, market=market)
+        blended = forecast_game(
+            home=home,
+            away=away,
+            engine=engine,
+            market=market,
+            market_weight=0.5,
+            ev_selection=True,
+        )
+        self.assertIsNotNone(blended.over_probability)
+        self.assertIsNotNone(blended.under_probability)
+        self.assertEqual(blended.market_blend_weight, 0.5)
+        self.assertAlmostEqual(blended.p_home + blended.p_away, 1.0)
+        self.assertNotEqual(plain.over_probability, blended.over_probability)
+
     def test_engine_roundtrip(self) -> None:
         engine = GameEngine(
             winner=fit_logistic([[1.0], [-1.0]], [1, 0], l2=0.0, iterations=200),

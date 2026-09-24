@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import datetime, time, timedelta, timezone
-from typing import Iterable
+from typing import Iterable, Optional
 from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
 from ..cache import JsonCache
-from ..config import Settings
+from ..config import OUTPUTS_DIR, Settings
 from ..models import Game, PropLine
 from ..utils import fetch_json, normalize_name, safe_float
 
@@ -43,6 +45,8 @@ class PlayerPropsSource:
         self.diagnostics: dict[str, object] = {}
         self._payload_timestamp: datetime | None = None
         self._payload_from_cache = False
+        self.raw_snapshot_path: str = ""
+        self.raw_snapshot_sha256: str = ""
 
     def fetch_prop_lines(self, games: Iterable[Game]) -> list[PropLine]:
         games = list(games)
@@ -147,6 +151,7 @@ class PlayerPropsSource:
         if cached is not None:
             self._payload_timestamp = self.lines_cache.saved_at(cache_key)
             self._payload_from_cache = True
+            self._persist_snapshot(cached, self._payload_timestamp)
             return cached
 
         date_from, date_to = self._utc_window()
@@ -162,7 +167,31 @@ class PlayerPropsSource:
         self.lines_cache.set(cache_key, payload)
         self._payload_timestamp = self.lines_cache.saved_at(cache_key)
         self._payload_from_cache = False
+        self._persist_snapshot(payload, self._payload_timestamp)
         return payload
+
+    def _persist_snapshot(
+        self, payload: dict, captured_at: Optional[datetime]
+    ) -> None:
+        """Write an immutable raw PlayerProps payload for this capture.
+
+        The TTL cache stores only the latest payload per date. Keeping a
+        timestamped raw copy lets later review recover the exact lines and
+        prices that produced a board.
+        """
+        timestamp = captured_at or datetime.now(timezone.utc)
+        stamp = timestamp.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        directory = OUTPUTS_DIR / "source_snapshots"
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / (
+            f"playerprops_wnba_{self.settings.screen_date.isoformat()}_{stamp}.json"
+        )
+        if not path.exists():
+            path.write_text(json.dumps(payload, sort_keys=True))
+        self.raw_snapshot_path = str(path)
+        self.raw_snapshot_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+        self.diagnostics["raw_snapshot_path"] = self.raw_snapshot_path
+        self.diagnostics["raw_snapshot_sha256"] = self.raw_snapshot_sha256
 
     def _utc_window(self) -> tuple[str, str]:
         local_tz = ZoneInfo("America/Detroit")

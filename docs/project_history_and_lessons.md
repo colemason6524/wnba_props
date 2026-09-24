@@ -2,11 +2,18 @@
 
 This document records why the project looks the way it does. It includes failures because many of the current safeguards came directly from them.
 
+> Historical context, not an operating guide. The current production system is
+> the Linux Azure prediction-first forecast board documented in
+> `docs/current_handoff.md`; Windows scheduling, the legacy screener, and the
+> shadow collector described below are retired.
+
 ## 1. Establishing a separate WNBA system
 
 The project was created as an independent WNBA counterpart to prior NBA/MLB props work. Concepts were reused, but data sources, aliases, thresholds, webhook configuration, caches, and deployment remained WNBA-specific. That separation has been successful: investigation and research can proceed without coupling this system to another sport.
 
-The production workflow became operational on Windows with ESPN for the slate/context, PlayerProps.ai for no-key lines, Basketball-Reference plus ESPN fallbacks for player logs, local history exports, and optional Discord delivery.
+The early production workflow became operational on Windows with ESPN for the
+slate/context, PlayerProps.ai for no-key lines, Basketball-Reference plus ESPN
+fallbacks for player logs, local history exports, and optional Discord delivery.
 
 ## 2. Learning that source health is part of the model
 
@@ -56,19 +63,19 @@ The first graded engineering slate proved the end-to-end analytics path, includi
 
 The correct response was to freeze the model and demand prospective collection rather than tune it.
 
-## 7. Deployment success and monitoring failure
+## 7. Historical deployment success and monitoring failure
 
 The separate Windows checkout and two scheduled tasks were deployed successfully, and initial unit tests/task smoke tests passed. The operational design preserved production exactly as intended.
 
 However, the smoke test happened when no game required player-log loading. In real capture windows, the PowerShell wrapper treated an ordinary Python stderr progress message as a terminating failure. Subsequent no-window runs exited 0, hiding the earlier failure in Task Scheduler. From August 5 through August 10 the shadow collected no Windows snapshots.
 
-This is the most important current failure. It teaches three things:
+At the time, this was the most important failure. It teaches three things:
 
 1. An exit-code smoke outside the critical branch is not an end-to-end smoke.
 2. Scheduled-task state and last result are not proof; verify artifact movement and counters.
 3. A repeated scheduler can overwrite a meaningful failed status with a later no-op success, so logs or health summaries need to retain the last material attempt.
 
-## 8. Current successes
+## 8. Historical successes
 
 - Production continues to run daily and export history.
 - The free/no-key line-and-price path is adequate for research collection.
@@ -78,14 +85,15 @@ This is the most important current failure. It teaches three things:
 - The first completed-game grader validation worked as designed.
 - The live audit found the shadow deployment failure before false claims were made about accumulated evidence.
 
-## 9. Current failures and open debts
+## 9. Current open debts
 
-- Prospective shadow evidence is still zero because the Windows collector wrapper fails in the meaningful execution branch.
-- Shadow v1 is not yet the full matchup/game simulator originally envisioned.
-- Production selection is not price-aware.
-- PlayerProps book labels and timestamps have not been externally validated at scale.
-- There is no strong shadow health alert for a game day with eligible windows but no artifact.
+- The retired shadow system is not a production dependency and should not be restarted.
+- PlayerProps book labels and timestamps still need external validation at scale.
+- Closing-line value is not yet captured consistently.
+- The current environment, DNP-risk, and positional-defense adjustments need
+  prospective calibration and ROI review before further tuning.
+- Correlated same-game player rows require slate/game-level review, not only
+  row-level totals.
 - The evidence minimum is a collection gate, not a statistically sufficient edge threshold.
 - Local and Windows production both contain uncommitted ESPN HTTP work that needs deliberate reconciliation.
 - Raw parsed snapshots are immutable, but the project should decide whether immutable raw source payloads are also required for auditability.
-

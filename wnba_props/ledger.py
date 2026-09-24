@@ -34,7 +34,15 @@ def _write_rows(path: Path, rows: Iterable[dict[str, Any]]) -> None:
 
 
 def ledger_key(row: dict[str, Any]) -> tuple[str, str]:
-    return str(row.get("run_id", "")), str(row.get("proposition_id", ""))
+    """Identity for duplicate detection.
+
+    ``snapshot_id`` distinguishes two captures of the same run (for example a
+    preflight capture and the published board). Without it, a later capture
+    would be treated as an exact duplicate of the earlier one and silently
+    dropped.
+    """
+    snapshot = str(row.get("snapshot_id") or row.get("run_id", ""))
+    return snapshot, str(row.get("proposition_id", ""))
 
 
 def ledger_identity(row: dict[str, Any]) -> tuple[str, ...]:
@@ -55,13 +63,46 @@ def is_settled(row: dict[str, Any]) -> bool:
     return bool(row.get("graded")) or row.get("outcome") not in {PENDING, UNPRICED}
 
 
+def _capture_order(row: dict[str, Any]) -> tuple[str, str]:
+    return (
+        str(row.get("captured_at") or ""),
+        str(row.get("snapshot_id") or row.get("run_id") or ""),
+    )
+
+
+def latest_rows(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return the newest capture for each canonical play identity.
+
+    The ledger keeps every capture for audit. Settlement, grading, and ROI use
+    only the latest capture so an earlier preflight snapshot can never stand in
+    for the forecast that was actually published or intended.
+    """
+    best: dict[tuple[str, ...], tuple[tuple[str, str], dict[str, Any]]] = {}
+    passthrough: list[dict[str, Any]] = []
+    for row in rows:
+        if not (row.get("game_date") and row.get("market") and row.get("subject")):
+            passthrough.append(row)
+            continue
+        identity = ledger_identity(row)
+        order = _capture_order(row)
+        previous = best.get(identity)
+        if previous is None or order >= previous[0]:
+            best[identity] = (order, row)
+    return passthrough + [entry[1] for entry in best.values()]
+
+
 def append_rows(path: Path, rows: Iterable[dict[str, Any]]) -> int:
     """Append rows idempotently, letting newer snapshots supersede pending ones.
 
-    Exact ``(run_id, proposition_id)`` duplicates are ignored. A row whose
+    Exact ``(snapshot_id, proposition_id)`` duplicates are ignored. A row whose
     identity matches an earlier still-pending row replaces it, so re-running a
     later slot refreshes the line instead of double-counting the same play.
-    Once a row is settled it is frozen and no duplicate is recorded.
+
+    Once a row is settled it is frozen. A genuinely later capture of the same
+    identity (identified by a later ``captured_at`` plus a different
+    ``snapshot_id``) is appended as a new superseding row and the older row is
+    annotated with ``superseded_by``. This preserves the audit trail without
+    letting the older settlement answer for the newer forecast.
     """
     existing = _read_rows(path)
     seen = {ledger_key(row) for row in existing}
@@ -76,7 +117,17 @@ def append_rows(path: Path, rows: Iterable[dict[str, Any]]) -> int:
         identity = ledger_identity(row)
         previous = identity_index.get(identity)
         if previous is not None:
-            if is_settled(existing[previous]):
+            previous_row = existing[previous]
+            if is_settled(previous_row):
+                incoming_captured = str(row.get("captured_at") or "")
+                if incoming_captured and _capture_order(row) > _capture_order(previous_row):
+                    previous_row["superseded_by"] = str(
+                        row.get("snapshot_id") or row.get("run_id") or ""
+                    )
+                    existing.append(row)
+                    identity_index[identity] = len(existing) - 1
+                    seen.add(key)
+                    added += 1
                 continue
             existing[previous] = row
             identity_index[identity] = previous
@@ -106,10 +157,18 @@ def settle_rows(
     PENDING are updated, which keeps the ledger idempotent.
     """
     rows = _read_rows(path)
+    latest_index: dict[tuple[str, ...], int] = {}
+    for index, row in enumerate(rows):
+        identity = ledger_identity(row)
+        previous = latest_index.get(identity)
+        if previous is None or _capture_order(row) >= _capture_order(rows[previous]):
+            latest_index[identity] = index
     updated = 0
     timestamp = datetime.now(timezone.utc).isoformat()
-    for row in rows:
+    for index, row in enumerate(rows):
         if row.get("outcome") != PENDING:
+            continue
+        if latest_index.get(ledger_identity(row)) != index:
             continue
         proposition_id = str(row.get("proposition_id", ""))
         if proposition_id not in results:
@@ -128,7 +187,7 @@ def settle_rows(
 def roi_summary(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
     settled = [
         row
-        for row in rows
+        for row in latest_rows(rows)
         if row.get("units") is not None
         and row.get("outcome") in {WIN, LOSS, PUSH}
     ]

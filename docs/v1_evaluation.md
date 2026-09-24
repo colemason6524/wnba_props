@@ -1,5 +1,9 @@
 # WNBA points projection shadow v1 — formal evaluation
 
+> Archived research evaluation. This rejected shadow model and its historical
+> Windows deployment are not part of current production. Current operation is
+> documented in `docs/current_handoff.md`.
+
 Decision date: August 24, 2026 (archive `v1_final_20260824`).
 
 ## Decision

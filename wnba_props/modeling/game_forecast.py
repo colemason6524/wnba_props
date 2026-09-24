@@ -15,7 +15,13 @@ from .game import (
     total_vector,
     winner_vector,
 )
-from .value import expected_value, expected_value_with_push, value_label
+from .value import (
+    blend_non_push,
+    expected_value,
+    expected_value_with_push,
+    no_vig_probabilities,
+    value_label,
+)
 
 
 GAME_ENGINE_VERSION = "wnba-game-engine-v1"
@@ -78,6 +84,19 @@ class GameForecast:
     spread_source: str = ""
     total_source: str = ""
     captured_at: str = ""
+    home_moneyline: Optional[int] = None
+    away_moneyline: Optional[int] = None
+    spread_push_probability: float = 0.0
+    home_spread_probability: Optional[float] = None
+    away_spread_probability: Optional[float] = None
+    spread_home_price: Optional[int] = None
+    spread_away_price: Optional[int] = None
+    total_push_probability: float = 0.0
+    over_probability: Optional[float] = None
+    under_probability: Optional[float] = None
+    over_price: Optional[int] = None
+    under_price: Optional[int] = None
+    market_blend_weight: float = 0.0
 
 
 def save_game_engine(path: Path, engine: GameEngine) -> None:
@@ -130,16 +149,32 @@ def forecast_game(
     spread_source: str = "",
     total_source: str = "",
     captured_at: str = "",
+    market_weight: float = 0.0,
+    ev_selection: bool = False,
 ) -> GameForecast:
-    p_home = engine.winner.predict_proba(winner_vector(home, away))
-    p_away = 1.0 - p_home
+    raw_p_home = engine.winner.predict_proba(winner_vector(home, away))
+    raw_p_away = 1.0 - raw_p_home
 
     margin_projection = engine.margin.predict(margin_vector(home, away))
     total_projection = engine.total.predict(total_vector(home, away))
     margin_sd = engine.margin.residual_sd or 10.0
     total_sd = engine.total.residual_sd or 12.0
 
+    p_home, p_away = raw_p_home, raw_p_away
+    if market_weight > 0.0:
+        market_home, market_away = no_vig_probabilities(
+            market.home_moneyline, market.away_moneyline
+        )
+        p_home, p_away = blend_non_push(
+            raw_p_home, raw_p_away, market_home, market_away, market_weight
+        )
+
     winner_pick = "HOME" if p_home >= p_away else "AWAY"
+    if ev_selection:
+        home_ev = expected_value(p_home, market.home_moneyline)
+        away_ev = expected_value(p_away, market.away_moneyline)
+        if home_ev is not None and away_ev is not None and away_ev > home_ev:
+            winner_pick = "AWAY"
     winner_probability = p_home if winner_pick == "HOME" else p_away
     winner_price = (
         market.home_moneyline if winner_pick == "HOME" else market.away_moneyline
@@ -150,13 +185,38 @@ def forecast_game(
     spread_probability: Optional[float] = None
     spread_price: Optional[int] = None
     spread_ev: Optional[float] = None
+    spread_push = 0.0
+    cover_probability: Optional[float] = None
+    no_cover_probability: Optional[float] = None
     if market.home_spread is not None:
-        over, under, push = _split_probability(
+        cover, no_cover, spread_push = _split_probability(
             margin_projection, margin_sd, -market.home_spread
         )
-        cover = over
-        no_cover = under
-        if cover >= no_cover:
+        if market_weight > 0.0:
+            market_cover, market_no_cover = no_vig_probabilities(
+                market.home_spread_price, market.away_spread_price
+            )
+            cover, no_cover = blend_non_push(
+                cover,
+                no_cover,
+                market_cover,
+                market_no_cover,
+                market_weight,
+            )
+        cover_probability, no_cover_probability = cover, no_cover
+        if ev_selection:
+            home_ev = expected_value_with_push(
+                cover, no_cover, market.home_spread_price
+            )
+            away_ev = expected_value_with_push(
+                no_cover, cover, market.away_spread_price
+            )
+            home_wins = (
+                away_ev is None or (home_ev is not None and home_ev >= away_ev)
+            )
+        else:
+            home_wins = cover >= no_cover
+        if home_wins:
             spread_pick = "HOME"
             spread_probability = cover
             spread_price = market.home_spread_price
@@ -171,11 +231,30 @@ def forecast_game(
     total_probability: Optional[float] = None
     total_price: Optional[int] = None
     total_ev: Optional[float] = None
+    total_push = 0.0
+    over_probability: Optional[float] = None
+    under_probability: Optional[float] = None
     if market.total_line is not None:
-        over, under, push = _split_probability(
+        over, under, total_push = _split_probability(
             total_projection, total_sd, market.total_line
         )
-        if over >= under:
+        if market_weight > 0.0:
+            market_over, market_under = no_vig_probabilities(
+                market.over_price, market.under_price
+            )
+            over, under = blend_non_push(
+                over, under, market_over, market_under, market_weight
+            )
+        over_probability, under_probability = over, under
+        if ev_selection:
+            over_ev = expected_value_with_push(over, under, market.over_price)
+            under_ev = expected_value_with_push(under, over, market.under_price)
+            over_wins = (
+                under_ev is None or (over_ev is not None and over_ev >= under_ev)
+            )
+        else:
+            over_wins = over >= under
+        if over_wins:
             total_pick = "OVER"
             total_probability = over
             total_price = market.over_price
@@ -215,6 +294,19 @@ def forecast_game(
         spread_source=spread_source,
         total_source=total_source,
         captured_at=captured_at,
+        home_moneyline=market.home_moneyline,
+        away_moneyline=market.away_moneyline,
+        spread_push_probability=spread_push,
+        home_spread_probability=cover_probability,
+        away_spread_probability=no_cover_probability,
+        spread_home_price=market.home_spread_price,
+        spread_away_price=market.away_spread_price,
+        total_push_probability=total_push,
+        over_probability=over_probability,
+        under_probability=under_probability,
+        over_price=market.over_price,
+        under_price=market.under_price,
+        market_blend_weight=market_weight,
     )
 
 
