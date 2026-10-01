@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "project_id": "wnba_props",
+  "updated_at": "2026-09-28T19:34:50-04:00",
+  "status": "observing",
+  "summary": "Playoff phase is configured on the VM; the Sep 27 slate was corrected into the playoff ledger cohort and reported separately for team and player props. The Sep 29 pre-capture check passed (87 rows, 81 priced, health=ok; 23/25 player logs fresh through Sep 27), but no Sep 29 playoff board has been produced yet: the Sep 28 evening timer correctly found no games.",
+  "experiment": "Prospectively measure playoff paper performance without refitting; compare team markets with player props separately and allow postseason trends to differ from regular-season behavior.",
+  "watching_for": "Sep 29 board exists with playoff phase, both scheduled games, health=ok, fresh player-log telemetry; then Sep 30 grade settles the slate and writes separate team/player phase summaries. Flag missing/degraded capture, uncovered game, or stale logs.",
+  "next_action": "After Sep 29 pregame capture, inspect the board and ledger for phase, game coverage, health, and player-log freshness; after Sep 30 morning grade, verify settled playoff totals and team/player splits.",
+  "deployed": true,
+  "git_commit": "",
+  "check_back": {
+    "kind": "grade_event",
+    "label": "after Sep 29 playoff slate is graded",
+    "target": null,
+    "baseline": "2026-09-26T00:07:22-04:00",
+    "events": [],
+    "target_date": "2026-09-29"
+  },
+  "docs": [
+    {
+      "label": "Next check-in",
+      "path": "docs/NEXT_CHECKIN.md"
+    },
+    {
+      "label": "Current handoff",
+      "path": "docs/current_handoff.md"
+    },
+    {
+      "label": "Research roadmap",
+      "path": "docs/research_model_roadmap.md"
+    }
+  ]
+}
