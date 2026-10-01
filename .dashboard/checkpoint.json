@@ -1,21 +1,21 @@
 {
   "schema_version": 1,
   "project_id": "wnba_props",
-  "updated_at": "2026-09-28T19:34:50-04:00",
+  "updated_at": "2026-09-30T23:48:45-04:00",
   "status": "observing",
-  "summary": "Playoff phase is configured on the VM; the Sep 27 slate was corrected into the playoff ledger cohort and reported separately for team and player props. The Sep 29 pre-capture check passed (87 rows, 81 priced, health=ok; 23/25 player logs fresh through Sep 27), but no Sep 29 playoff board has been produced yet: the Sep 28 evening timer correctly found no games.",
-  "experiment": "Prospectively measure playoff paper performance without refitting; compare team markets with player props separately and allow postseason trends to differ from regular-season behavior.",
-  "watching_for": "Sep 29 board exists with playoff phase, both scheduled games, health=ok, fresh player-log telemetry; then Sep 30 grade settles the slate and writes separate team/player phase summaries. Flag missing/degraded capture, uncovered game, or stale logs.",
-  "next_action": "After Sep 29 pregame capture, inspect the board and ledger for phase, game coverage, health, and player-log freshness; after Sep 30 morning grade, verify settled playoff totals and team/player splits.",
+  "summary": "Playoff phase is board-verified: the Sep 29 capture (pregame+evening, 87 identities, phase=playoff, health=ok) was graded cleanly on the Sep 30 morning timer. Cumulative playoff after two slates: 124-123, -22.042u, ROI -8.92% (247 settled). Team markets positive (+3.867u, 9-7); player props bleeding (-25.91u, -11.31%) led by AST (-16.344u, -32.05%, losing on both sides, clustered in 28-34 projected-minutes guards; bootstrap CI [-54.9%, -8.1%] so it is a consistent effect, not one-slate noise). PTS/3PM carry the regular-season calibration warnings forward; REB holds (+4.01u). Playable subset 65-73, -11.137u. Sep 30 slate (WSH@ATL, GS@DAL) captured twice (99 identities, 45/47 paper plays); games were in progress at check-in. All production code now committed: playoff ESPN boxscore-window log fallback, freshness telemetry, --coverage-report pre-capture gate (deployed to VM at commit 46cb0ce, 186 tests green on both copies). No model/config change made - policy keeps the frozen version prospectively.",
+  "experiment": "Measure the frozen forecast version through the postseason; separate team-market and player-prop books; do not refit production artifacts or tune on the same slates being measured.",
+  "watching_for": "Oct 1 morning grade settling the Sep 30 slate (~99 identities from the evening capture, pregame-only rows from pregame prices); AST bleed repeating on slate 3; Oct 1 pregame log freshness: IND/LV subjects must include their Sep 29 games (latest_log_date 2026-09-29, stale players shrinking). Flag: missing/degraded board, uncovered game, stale-logs anomaly, timer failure.",
+  "next_action": "Check the Oct 1 06:17 ET grade output and phase_summary team/player splits; after 5-7 slates run the calibration review (minutes distribution vs regular-season fit, AST lineup variance, market-blend/EV candidates) before any versioned model change.",
   "deployed": true,
-  "git_commit": "",
+  "git_commit": "46cb0ce",
   "check_back": {
     "kind": "grade_event",
-    "label": "after Sep 29 playoff slate is graded",
+    "label": "after the Sep 30 playoff slate is graded",
     "target": null,
     "baseline": "2026-09-26T00:07:22-04:00",
     "events": [],
-    "target_date": "2026-09-29"
+    "target_date": "2026-09-30"
   },
   "docs": [
     {
