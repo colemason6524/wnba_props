@@ -30,6 +30,8 @@ def grade_over_under(pick_side: str, value: float, line: float) -> str:
 
 
 def settle_units(outcome: str, price: Optional[int]) -> Optional[float]:
+    if price is None:
+        return None
     payout = american_payout(price)
     if outcome == WIN:
         return payout

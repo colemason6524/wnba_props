@@ -153,8 +153,10 @@ def settle_rows(
 ) -> int:
     """Settle a ledger by proposition_id.
 
-    ``results`` maps proposition_id to ``(outcome, units)``. Only rows still
-    PENDING are updated, which keeps the ledger idempotent.
+    ``results`` maps proposition_id to ``(outcome, units)``. Priced PENDING
+    rows and unpriced UNPRICED rows may both receive a final outcome. For an
+    unpriced row, callers record the result with ``units=None``: this resolves
+    forecast accuracy without inventing a financial return.
     """
     rows = _read_rows(path)
     latest_index: dict[tuple[str, ...], int] = {}
@@ -166,7 +168,7 @@ def settle_rows(
     updated = 0
     timestamp = datetime.now(timezone.utc).isoformat()
     for index, row in enumerate(rows):
-        if row.get("outcome") != PENDING:
+        if row.get("outcome") not in {PENDING, UNPRICED}:
             continue
         if latest_index.get(ledger_identity(row)) != index:
             continue

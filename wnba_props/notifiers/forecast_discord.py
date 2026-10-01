@@ -206,6 +206,14 @@ def render_recap(screen_date: str, summary: dict, *, title: str = "WNBA Forecast
             f"{market}: {record.get('wins', 0)}-{record.get('losses', 0)}-{record.get('pushes', 0)}"
             f" | {record.get('units', 0.0):+.2f}u{roi_text}"
         )
+    unpriced = summary.get("unpriced", {})
+    if unpriced.get("evaluated", 0):
+        lines.append(
+            "Unpriced outcomes (accuracy only): "
+            f"{unpriced.get('wins', 0)}-{unpriced.get('losses', 0)}-"
+            f"{unpriced.get('pushes', 0)}P/{unpriced.get('voids', 0)}V "
+            f"({unpriced['evaluated']}; excluded from units)"
+        )
     pending = summary.get("pending", 0)
     if pending:
         lines.append(f"Pending/unresolved: {pending}")

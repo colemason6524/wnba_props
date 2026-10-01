@@ -139,7 +139,12 @@ def grade_ledger_row(row: dict, scores: dict, player_stats: dict) -> tuple[str, 
 
 
 def _summarize(rows: list[dict]) -> dict:
-    graded = [row for row in rows if row.get("outcome") in (WIN, LOSS, PUSH, VOID)]
+    graded = [
+        row
+        for row in rows
+        if row.get("outcome") in (WIN, LOSS, PUSH, VOID)
+        and row.get("units") is not None
+    ]
     overall = roi_summary(rows)
     by_market: dict[str, dict] = {}
     for row in graded:
@@ -157,13 +162,32 @@ def _summarize(rows: list[dict]) -> dict:
             bucket["plays"] += 1
     for market, bucket in by_market.items():
         bucket["roi"] = round(bucket["units"] / bucket["plays"], 4) if bucket["plays"] else None
-    pending = sum(1 for row in rows if row.get("outcome") in (PENDING, UNPRICED))
+    pending = sum(
+        1
+        for row in rows
+        if row.get("outcome") == PENDING
+        or (row.get("outcome") == UNPRICED and not row.get("graded"))
+    )
+    unpriced = [
+        row
+        for row in rows
+        if row.get("outcome") in (WIN, LOSS, PUSH, VOID)
+        and row.get("units") is None
+        and row.get("graded")
+    ]
     paper_rows = [row for row in rows if row.get("paper_play")]
     return {
         "overall": overall,
         "paper_play": roi_summary(paper_rows),
         "by_market": by_market,
         "pending": pending,
+        "unpriced": {
+            "evaluated": len(unpriced),
+            "wins": sum(1 for row in unpriced if row.get("outcome") == WIN),
+            "losses": sum(1 for row in unpriced if row.get("outcome") == LOSS),
+            "pushes": sum(1 for row in unpriced if row.get("outcome") == PUSH),
+            "voids": sum(1 for row in unpriced if row.get("outcome") == VOID),
+        },
     }
 
 
@@ -233,7 +257,7 @@ def grade_date(
 
     results: dict[str, tuple[str, float | None]] = {}
     for row in rows:
-        if row.get("outcome") != PENDING:
+        if row.get("outcome") not in (PENDING, UNPRICED):
             continue
         proposition_id = str(row.get("proposition_id", ""))
         outcome, units = grade_ledger_row(row, scores, player_stats)

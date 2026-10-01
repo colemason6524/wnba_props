@@ -269,10 +269,17 @@ and makes the check meaningless.
 
 Known-benign residuals, verified 2026-09-28: `outputs/health/run_status.jsonl`
 is written only by the retired `run_nightly.py` and read by nothing; it is inert.
-FanDuel sometimes publishes only the over side, so a minority of picked rows are
-recorded `UNPRICED` (`price is None`) and are excluded from play totals while
-remaining in the board. All `paper_play` rows are priced, so the paper record is
-not affected.
+FanDuel sometimes publishes only the over side. Because side selection is
+forecast-probability-first when `EV_SIDE_SELECTION=false`, a row can select
+UNDER even when only `over_odds` is present. Such a row is labeled `UNPRICED`
+(`price is None`): it must not enter monetary ROI, but after the game the grader
+records its WIN/LOSS/PUSH/VOID outcome with `units=null`. Grade summaries report
+these separately under `unpriced` (evaluated/wins/losses/pushes/voids), distinct
+from still-pending rows; this preserves forecast-accuracy evidence without
+inventing a payout. All `paper_play` rows are priced, so the paper ROI record is
+not affected. Historical rows previously left `UNPRICED` can be resolved by
+rerunning that date's grader after this code is deployed; no historical price
+or units are fabricated.
 
 ## Historical context (legacy screener, retired)
 

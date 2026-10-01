@@ -157,6 +157,23 @@ class LedgerTests(unittest.TestCase):
             summary = roi_summary(load_rows(path))
             self.assertEqual(summary["plays"], 1)
 
+    def test_settle_records_unpriced_outcome_without_financial_units(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ledger.jsonl"
+            row = {
+                "run_id": "r1",
+                "proposition_id": "p-unpriced",
+                "outcome": "UNPRICED",
+                "price": None,
+                "graded": False,
+            }
+            append_rows(path, [row])
+            self.assertEqual(settle_rows(path, {"p-unpriced": (LOSS, None)}), 1)
+            settled = load_rows(path)[0]
+            self.assertEqual(settled["outcome"], LOSS)
+            self.assertIsNone(settled["units"])
+            self.assertTrue(settled["graded"])
+            self.assertEqual(roi_summary([settled])["plays"], 0)
 
     def test_later_slot_supersedes_pending(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -553,6 +570,13 @@ class LedgerGradingTests(unittest.TestCase):
         missing = dict(market="REB", pick="UNDER", line=5.5, price=-110, subject="Nobody")
         self.assertEqual(grade_ledger_row(missing, {}, {})[0], PENDING)
 
+    def test_unpriced_prop_can_be_outcome_graded_without_units(self) -> None:
+        from grade_forecast_board import grade_ledger_row
+
+        stats = {"player": self._stats(points=20)}
+        row = dict(market="PTS", pick="UNDER", line=19.5, price=None, subject="Player")
+        self.assertEqual(grade_ledger_row(row, {}, stats), (LOSS, None))
+
     def test_summarize_and_recap(self) -> None:
         from grade_forecast_board import _summarize
 
@@ -566,7 +590,17 @@ class LedgerGradingTests(unittest.TestCase):
         self.assertEqual(summary["overall"]["wins"], 1)
         self.assertEqual(summary["overall"]["losses"], 1)
         self.assertEqual(summary["pending"], 1)
+        self.assertEqual(summary["unpriced"]["evaluated"], 0)
         self.assertEqual(summary["paper_play"]["plays"], 1)
+
+        evaluated_unpriced = _summarize(
+            [{"market": "PTS", "outcome": LOSS, "units": None, "graded": True}]
+        )
+        self.assertEqual(evaluated_unpriced["pending"], 0)
+        self.assertEqual(evaluated_unpriced["unpriced"]["evaluated"], 1)
+        self.assertEqual(evaluated_unpriced["unpriced"]["losses"], 1)
+        self.assertEqual(evaluated_unpriced["overall"]["plays"], 0)
+        self.assertNotIn("PTS", evaluated_unpriced["by_market"])
         self.assertEqual(summary["paper_play"]["wins"], 1)
 
         from wnba_props.notifiers.forecast_discord import render_recap
@@ -574,6 +608,16 @@ class LedgerGradingTests(unittest.TestCase):
         text = render_recap("2026-09-17", summary)
         self.assertIn("WNBA Forecast Recap - 2026-09-17", text)
         self.assertIn("ML:", text)
+
+        unpriced_text = render_recap(
+            "2026-09-30",
+            {
+                "overall": {"wins": 0, "losses": 0, "pushes": 0, "units": 0.0, "plays": 0},
+                "unpriced": {"evaluated": 18, "wins": 8, "losses": 10, "pushes": 0, "voids": 0},
+                "pending": 0,
+            },
+        )
+        self.assertIn("Unpriced outcomes (accuracy only): 8-10-0P/0V", unpriced_text)
 
 
 class DiscordRenderTests(unittest.TestCase):
