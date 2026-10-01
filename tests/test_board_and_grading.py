@@ -633,6 +633,41 @@ class PlayoffPhaseTests(unittest.TestCase):
         self.assertIn("playoff", summary)
         self.assertEqual(summary["playoff"]["overall"]["losses"], 1)
 
+    def test_phase_summary_splits_team_and_player_books(self) -> None:
+        from grade_forecast_board import _phase_summary
+
+        rows = [
+            {"phase": "playoff", "market": "ML", "outcome": WIN, "units": 0.9},
+            {"phase": "playoff", "market": "SPREAD", "outcome": LOSS, "units": -1.0},
+            {"phase": "playoff", "market": "PTS", "outcome": WIN, "units": 0.8},
+            {"phase": "playoff", "market": "PTS", "outcome": LOSS, "units": -1.0},
+            {"phase": "playoff", "market": "REB", "outcome": WIN, "units": 0.5},
+        ]
+        playoff = _phase_summary(rows, "regular")["playoff"]
+
+        self.assertEqual(playoff["overall"]["plays"], 5)
+        self.assertEqual(playoff["team"]["overall"]["plays"], 2)
+        self.assertEqual(playoff["team"]["overall"]["wins"], 1)
+        self.assertAlmostEqual(playoff["team"]["overall"]["units"], -0.1)
+        self.assertEqual(playoff["player"]["overall"]["plays"], 3)
+        self.assertEqual(playoff["player"]["overall"]["wins"], 2)
+        self.assertAlmostEqual(playoff["player"]["overall"]["units"], 0.3)
+
+        self.assertIn("ML", playoff["team"]["by_market"])
+        self.assertNotIn("PTS", playoff["team"]["by_market"])
+        self.assertIn("PTS", playoff["player"]["by_market"])
+        self.assertNotIn("ML", playoff["player"]["by_market"])
+
+        # the two books partition the priced record
+        self.assertEqual(
+            playoff["team"]["overall"]["plays"] + playoff["player"]["overall"]["plays"],
+            playoff["overall"]["plays"],
+        )
+        self.assertEqual(
+            playoff["team"]["overall"]["wins"] + playoff["player"]["overall"]["wins"],
+            playoff["overall"]["wins"],
+        )
+
 
 class PositionalFeatureTests(unittest.TestCase):
     def test_positional_allowance_uses_position_map(self) -> None:

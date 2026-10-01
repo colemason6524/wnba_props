@@ -177,12 +177,24 @@ def _phase_for_row(row: dict, default: str) -> str:
 
 
 def _phase_summary(rows: list[dict], default_phase: str) -> dict:
-    """Cumulative summary by season phase, using only the latest capture."""
+    """Cumulative summary by season phase, using only the latest capture.
+
+    Each phase carries the combined record plus separate ``team`` (moneyline,
+    spread, total) and ``player`` (PTS, REB, AST, 3PM) views. The two books
+    share the pipeline but are read and compared differently, so the split is
+    recorded alongside ``by_market`` rather than left to be re-derived.
+    """
     by_phase: dict[str, list[dict]] = {}
     for row in latest_rows(rows):
         phase = _phase_for_row(row, default_phase)
         by_phase.setdefault(phase, []).append(row)
-    return {phase: _summarize(items) for phase, items in sorted(by_phase.items())}
+    summary: dict[str, dict] = {}
+    for phase, items in sorted(by_phase.items()):
+        phase_summary = _summarize(items)
+        phase_summary["team"] = _subset_summary(items, TEAM_MARKETS)
+        phase_summary["player"] = _subset_summary(items, PLAYER_MARKETS)
+        summary[phase] = phase_summary
+    return summary
 
 
 def _recap_titles(phase: str) -> tuple[str, str, str]:

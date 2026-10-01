@@ -20,6 +20,7 @@ import sys
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
@@ -49,6 +50,9 @@ from wnba_props.sources.basketball_reference import BasketballReferenceSource
 from wnba_props.sources.espn import EspnSlateSource
 from wnba_props.sources.espn_gamelog import EspnGameLogSource
 from wnba_props.sources.espn_injuries import EspnInjurySource
+from wnba_props.sources.espn_recent_boxscore_logs import (
+    EspnBoundedBoxscoreLogsSource,
+)
 from wnba_props.sources.playerprops import PlayerPropsSource
 from wnba_props.features.team import parse_team_results_from_scoreboard
 from wnba_props.features.player import league_stat_baselines, league_positional_baselines
@@ -66,6 +70,9 @@ DISCORD_LEDGER = LEDGER_DIR / "discord_delivery.jsonl"
 SCOREBOARD_URL = (
     "https://site.api.espn.com/apis/site/v2/sports/basketball/wnba/scoreboard?dates={date_str}"
 )
+# Playoff freshness guard: a completed game inside this many days keeps a log
+# current, because the postseason plays every other day at most.
+PLAYOFF_LOG_STALENESS_DAYS = 2
 
 
 def _run_id(screen_date: str, slot: str) -> str:
@@ -85,7 +92,7 @@ def _player_logs_stale(screen_date: date, logs, *, phase: str) -> bool:
     latest = _latest_log_date(logs)
     if latest is None:
         return True
-    return latest < screen_date - timedelta(days=2)
+    return latest < screen_date - timedelta(days=PLAYOFF_LOG_STALENESS_DAYS)
 
 
 def _player_logs_newer(fallback_logs, logs) -> bool:
@@ -94,6 +101,44 @@ def _player_logs_newer(fallback_logs, logs) -> bool:
     if fallback_latest is None:
         return False
     return current_latest is None or fallback_latest > current_latest
+
+
+def _merge_player_logs(primary_logs, extra_logs):
+    """Add only missing games to a season history, newest first.
+
+    Deduped per (team, game_date) with the primary source winning, so a
+    fallback can never overwrite or shorten the season-long history the model
+    trains on.
+    """
+    merged: dict[tuple[str, date], object] = {}
+    for log in list(primary_logs) + list(extra_logs):
+        merged.setdefault((log.team, log.game_date), log)
+    return sorted(merged.values(), key=lambda log: log.game_date, reverse=True)
+
+
+def _publish_coverage(
+    board,
+    *,
+    settings,
+    slate_games: int,
+    evaluated_lines: int,
+    games_with_markets: int,
+) -> dict[str, Any]:
+    """Compute the fail-closed health report the way production does.
+
+    Shared by the pipeline gate and ``--coverage-report`` so the read-only
+    pre-capture check cannot drift from the gate that blocks publication.
+    """
+    return health_report(
+        board,
+        require_priced=True,
+        slate_games=slate_games,
+        evaluated_lines=evaluated_lines,
+        min_evaluated_lines=settings.min_evaluated_lines,
+        min_event_match_ratio=settings.min_event_match_ratio,
+        min_player_load_ratio=settings.min_player_load_ratio,
+        games_with_markets=games_with_markets,
+    )
 
 
 def _config_fingerprint(settings) -> str:
@@ -193,12 +238,14 @@ def _collect_player_logs(settings, games, prop_lines, shared_cache, injuries_cac
 
     Uses Basketball-Reference as primary with an ESPN gamelog fallback. No
     legacy staleness discard: the forecast model trains on season-long history,
-    and a schedule break must not empty the feature table.
+    and a schedule break must not empty the feature table. In the postseason a
+    stale log is topped up from a bounded ESPN boxscore window instead.
     """
     logs_source = BasketballReferenceSource(
         shared_cache, sticky_daily_cache=settings.sticky_daily_log_cache
     )
     fallback = EspnGameLogSource(shared_cache)
+    boxscore_fallback = EspnBoundedBoxscoreLogsSource(shared_cache)
     season = settings.screen_date.year
 
     injury_source = EspnInjurySource(injuries_cache)
@@ -213,11 +260,15 @@ def _collect_player_logs(settings, games, prop_lines, shared_cache, injuries_cac
 
     logs_by_player = {}
     seen = set()
+    subjects = []
+    boxscore_players = []
+    added_by_boxscore = 0
     for line in prop_lines:
         key = line.player_name_norm
         if key in seen:
             continue
         seen.add(key)
+        subjects.append((key, line.team))
         logs = []
         try:
             logs = logs_source.fetch_logs(line.player_name_raw, line.team, season)
@@ -234,6 +285,34 @@ def _collect_player_logs(settings, games, prop_lines, shared_cache, injuries_cac
                 fallback_logs = []
             if fallback_logs and _player_logs_newer(fallback_logs, logs):
                 logs = fallback_logs
+        if logs and _player_logs_stale(
+            settings.screen_date, logs, phase=settings.season_phase
+        ):
+            # Basketball-Reference lags the postseason and the ESPN gamelog page
+            # is often behind a WAF challenge, so a completed playoff game can
+            # be missing entirely. Top up from boxscores over a bounded window
+            # and merge, never replace, the season history.
+            try:
+                boxscore_logs = boxscore_fallback.fetch_logs(
+                    line.player_name_raw, line.team, settings.screen_date
+                )
+            except Exception:  # noqa: BLE001
+                boxscore_logs = []
+            if boxscore_logs:
+                before = {log.game_date for log in logs}
+                logs = _merge_player_logs(logs, boxscore_logs)
+                added = len({log.game_date for log in boxscore_logs} - before)
+                if added:
+                    added_by_boxscore += added
+                    latest = _latest_log_date(logs)
+                    boxscore_players.append(
+                        {
+                            "player": key,
+                            "team": line.team,
+                            "added_games": added,
+                            "latest_log_date": latest.isoformat() if latest else None,
+                        }
+                    )
         if logs:
             logs_by_player[key] = logs
 
@@ -241,7 +320,60 @@ def _collect_player_logs(settings, games, prop_lines, shared_cache, injuries_cac
     for injuries in team_injuries.values():
         for injury in injuries:
             player_statuses[injury.player_name_norm] = injury.status
-    return logs_by_player, player_statuses, team_injuries
+
+    latest_dates = []
+    stale_players = []
+    for key, team in subjects:
+        logs = logs_by_player.get(key, [])
+        latest = _latest_log_date(logs)
+        if latest is not None:
+            latest_dates.append(latest)
+        if _player_logs_stale(
+            settings.screen_date, logs, phase=settings.season_phase
+        ):
+            stale_players.append(
+                {
+                    "player": key,
+                    "team": team,
+                    "latest_log_date": latest.isoformat() if latest else None,
+                }
+            )
+
+    freshness = {
+        "phase": settings.season_phase,
+        "staleness_days": PLAYOFF_LOG_STALENESS_DAYS,
+        "players_requested": len(subjects),
+        "players_with_logs": len(logs_by_player),
+        "players_without_logs": sorted(
+            {key for key, _team in subjects} - set(logs_by_player)
+        ),
+        "latest_log_date": (
+            max(latest_dates).isoformat() if latest_dates else None
+        ),
+        "expected_recent_after": (
+            settings.screen_date - timedelta(days=PLAYOFF_LOG_STALENESS_DAYS)
+        ).isoformat(),
+        "stale_players": sorted(stale_players, key=lambda item: item["player"]),
+        "boxscore_fallback": {
+            "lookback_days": boxscore_fallback.lookback_days,
+            "window_start": (
+                boxscore_fallback.window_start.isoformat()
+                if boxscore_fallback.window_start
+                else None
+            ),
+            "window_end": (
+                boxscore_fallback.window_end.isoformat()
+                if boxscore_fallback.window_end
+                else None
+            ),
+            "dates_with_games": boxscore_fallback.dates_with_games,
+            "slate_failures": boxscore_fallback.slate_failures,
+            "players_used": len(boxscore_players),
+            "added_games": added_by_boxscore,
+            "players": sorted(boxscore_players, key=lambda item: item["player"]),
+        },
+    }
+    return logs_by_player, player_statuses, team_injuries, freshness
 
 
 def _run_pipeline_once(
@@ -253,8 +385,14 @@ def _run_pipeline_once(
     webhook_url: str | None = None,
     refresh: bool = True,
     simulations: int = 10_000,
+    coverage_report: bool = False,
 ) -> tuple[int, bool]:
-    """Run one board capture; returns (exit_code, healthy)."""
+    """Run one board capture; returns (exit_code, healthy).
+
+    ``coverage_report`` computes and prints the publish health gate after the
+    board is built but before anything is written, so the expensive coverage
+    check can be exercised without publishing a board.
+    """
     settings = load_settings()
     settings.screen_date = date.fromisoformat(screen)
     run_id = _run_id(screen, slot)
@@ -319,8 +457,18 @@ def _run_pipeline_once(
         return 1, False
 
     print("[pipeline] stage=player_logs")
-    logs_by_player, player_statuses, team_injuries = _collect_player_logs(
+    logs_by_player, player_statuses, team_injuries, log_freshness = _collect_player_logs(
         settings, games, prop_lines, shared_cache, injuries_cache
+    )
+    fallback_stats = log_freshness["boxscore_fallback"]
+    print(
+        "[pipeline] player_logs: loaded={}/{} latest={} boxscore_fallback={} stale={}".format(
+            log_freshness["players_with_logs"],
+            log_freshness["players_requested"],
+            log_freshness["latest_log_date"],
+            fallback_stats["players_used"],
+            len(log_freshness["stale_players"]),
+        )
     )
     league_logs = [log for logs in logs_by_player.values() for log in logs]
     league_baselines = league_stat_baselines(
@@ -360,6 +508,7 @@ def _run_pipeline_once(
         ),
         "bookmaker": settings.playerprops_book,
         "player_logs_loaded": len(logs_by_player),
+        "player_logs_freshness": log_freshness,
         "injuries_by_team": {team: len(items) for team, items in team_injuries.items()},
         "league_baselines": {k: round(v, 3) for k, v in league_baselines.items()},
         "positions_loaded": len(position_map),
@@ -397,18 +546,27 @@ def _run_pipeline_once(
     )
 
     coverage = market_diags.get("coverage", {}) if isinstance(market_diags, dict) else {}
-    health = health_report(
+    health = _publish_coverage(
         board,
-        require_priced=True,
+        settings=settings,
         slate_games=len(games),
         evaluated_lines=len(prop_lines),
-        min_evaluated_lines=settings.min_evaluated_lines,
-        min_event_match_ratio=settings.min_event_match_ratio,
-        min_player_load_ratio=settings.min_player_load_ratio,
         games_with_markets=int(coverage.get("snapshots", 0)),
     )
     board.summary["health"] = health["status"]
     board.summary["health_reasons"] = health["reasons"]
+
+    if coverage_report:
+        print(
+            "[pipeline] coverage-report rows={} priced={} health={} reasons={}".format(
+                board.summary["total_rows"],
+                board.summary["priced_rows"],
+                health["status"],
+                health["reasons"] or "none",
+            )
+        )
+        print("[pipeline] coverage-report: no board or ledger written")
+        return 0, health["status"] == "ok"
 
     board_path = _board_path(screen, slot, snapshot_id)
     write_board(board_path, board)
@@ -468,6 +626,7 @@ def run_pipeline(
     pregame_retry_minutes: int = 15,
     pregame_max_retries: int = 3,
     pregame_wait: bool = True,
+    coverage_report: bool = False,
 ) -> int:
     """Run the forecast pipeline, with schedule-aware pregame behavior.
 
@@ -477,6 +636,10 @@ def run_pipeline(
     ``PREGAME_TIP_BUFFER_MINUTES``. Retries reuse the same ``pregame`` slot, so
     Discord duplicate suppression keeps them idempotent. All other slots run
     exactly once, as before.
+
+    ``coverage_report`` stops after computing the publish health gate: it
+    prints the result and writes nothing, so the coverage check has no
+    production side effects.
     """
     if slot != "pregame" or not pregame_wait:
         code, _ = _run_pipeline_once(
@@ -487,6 +650,7 @@ def run_pipeline(
             webhook_url=webhook_url,
             refresh=refresh,
             simulations=simulations,
+            coverage_report=coverage_report,
         )
         return code
 
@@ -516,10 +680,11 @@ def run_pipeline(
             webhook_url=webhook_url,
             refresh=refresh,
             simulations=simulations,
+            coverage_report=coverage_report,
         )
         if last_code == 0 and healthy:
             return 0
-        if attempt >= attempts:
+        if coverage_report or attempt >= attempts:
             break
         now = datetime.now(timezone.utc)
         cutoff = earliest_tip - timedelta(minutes=PREGAME_TIP_BUFFER_MINUTES)
@@ -636,6 +801,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Pregame slot: capture immediately instead of waiting for the window.",
     )
+    parser.add_argument(
+        "--coverage-report",
+        action="store_true",
+        help=(
+            "Build the board, print the publish health gate, and exit without "
+            "writing a board or ledger. Use with --slot pregame --no-pregame-wait "
+            "for a side-effect-free pre-capture coverage check."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -654,6 +828,7 @@ def main(argv: list[str] | None = None) -> int:
         pregame_retry_minutes=args.pregame_retry_minutes,
         pregame_max_retries=args.pregame_max_retries,
         pregame_wait=not args.no_pregame_wait,
+        coverage_report=args.coverage_report,
     )
 
 

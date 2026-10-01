@@ -81,7 +81,8 @@ class PregameOrchestrationTests(unittest.TestCase):
         once.assert_not_called()
 
     def test_retry_until_healthy_then_stop(self) -> None:
-        tip = datetime(2026, 9, 27, 18, 0, tzinfo=timezone.utc)
+        # Relative to real now so the retry window stays open as time passes.
+        tip = datetime.now(timezone.utc) + timedelta(hours=4)
         with (
             patch.object(
                 pipeline,
