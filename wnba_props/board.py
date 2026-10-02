@@ -238,6 +238,8 @@ def build_prop_rows(
                 "ev": forecast.ev,
                 "value": forecast.value_label,
                 "source": forecast.market_source,
+                "price_source_book": forecast.price_source_book,
+                "price_fallback": forecast.price_fallback,
                 "captured_at": forecast.captured_at,
                 "dnp_probability": forecast.dnp_probability,
                 "void_probability": forecast.void_probability,
@@ -266,6 +268,8 @@ def build_prop_rows(
                 "value": forecast.value_label,
                 "paper_play": forecast.value_label == "playable",
                 "source": forecast.market_source,
+                "price_source_book": forecast.price_source_book,
+                "price_fallback": forecast.price_fallback,
                 "captured_at": forecast.captured_at,
                 "dnp_probability": forecast.dnp_probability,
                 "outcome": PENDING if forecast.price is not None else UNPRICED,
@@ -317,6 +321,8 @@ def assemble_board(
     for row in ledger_rows:
         row.setdefault("slot", slot)
     priced = [row for row in ledger_rows if row["price"] is not None]
+    primary_priced = [row for row in priced if not row.get("price_fallback", False)]
+    fallback_priced = [row for row in priced if row.get("price_fallback", False)]
     favorable = [row for row in ledger_rows if row["value"] == "playable"]
 
     return ForecastBoard(
@@ -330,6 +336,8 @@ def assemble_board(
         summary={
             "total_rows": len(ledger_rows),
             "priced_rows": len(priced),
+            "primary_priced_rows": len(primary_priced),
+            "fallback_priced_rows": len(fallback_priced),
             "favorable_rows": len(favorable),
             "game_rows": len(game_rows),
             "prop_rows": len(prop_rows),
@@ -505,9 +513,12 @@ def health_report(
 
     summary = board.summary
     priced_rows = int(summary.get("priced_rows", 0))
-    if require_priced and priced_rows < max(1, min_priced_rows):
+    primary_priced_rows = int(summary.get("primary_priced_rows", priced_rows))
+    fallback_priced_rows = int(summary.get("fallback_priced_rows", 0))
+    if require_priced and primary_priced_rows < max(1, min_priced_rows):
         reasons.append(
-            f"priced rows {priced_rows} below minimum {max(1, min_priced_rows)}"
+            f"primary-book priced rows {primary_priced_rows} below minimum "
+            f"{max(1, min_priced_rows)}"
         )
 
     if min_evaluated_lines and evaluated_lines < min_evaluated_lines:
@@ -539,6 +550,8 @@ def health_report(
         "slate_games": slate_games,
         "evaluated_lines": evaluated_lines,
         "priced_rows": priced_rows,
+        "primary_priced_rows": primary_priced_rows,
+        "fallback_priced_rows": fallback_priced_rows,
     }
 
 

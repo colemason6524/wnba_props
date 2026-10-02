@@ -16,6 +16,29 @@ class Game:
 
 
 @dataclass
+class AlternateBookOdds:
+    """Alternate-book prices for the *same* numeric line as the primary line.
+
+    A book is only recorded when it quotes the exact same line value with valid
+    nonzero American odds on both sides, so these prices can be used as an
+    execution price without ever implying a different line. The list order on
+    ``PropLine.alternate_books`` is the configured fallback priority.
+    """
+
+    bookmaker: str
+    over_odds: int
+    under_odds: int
+
+    def price(self, side: str) -> Optional[int]:
+        """American odds for ``side`` (``"OVER"``/``"UNDER"``), else ``None``."""
+        if side == "OVER":
+            return self.over_odds
+        if side == "UNDER":
+            return self.under_odds
+        return None
+
+
+@dataclass
 class PropLine:
     event_id: str
     game_date: date
@@ -32,6 +55,7 @@ class PropLine:
     under_odds: Optional[int] = None
     over_decimal: Optional[float] = None
     under_decimal: Optional[float] = None
+    alternate_books: List[AlternateBookOdds] = field(default_factory=list)
 
 
 @dataclass

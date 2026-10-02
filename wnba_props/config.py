@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Sequence
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -31,6 +31,16 @@ DEFAULT_PROP_TYPES = [
     "REB",
     "AST",
     "3PM",
+]
+
+# Ordered alternate-book priority used when the configured primary book
+# (``PLAYERPROPS_BOOK``) has no usable price for the selected side. These books
+# only ever supply a price; the model line always comes from the primary book.
+DEFAULT_PLAYERPROPS_BOOK_FALLBACKS = [
+    "DRAFTKINGS",
+    "CAESARS",
+    "HARDROCKBET",
+    "ESPN",
 ]
 
 DISCORD_SUPPRESS_FLAGS = frozenset({"SEASON-", "TEAM_OUT"})
@@ -111,6 +121,9 @@ class Settings:
     player_aliases: Dict[str, str] = field(default_factory=dict)
     line_source: str = "playerprops"
     playerprops_book: str = "FANDUEL"
+    playerprops_book_fallbacks: List[str] = field(
+        default_factory=lambda: DEFAULT_PLAYERPROPS_BOOK_FALLBACKS.copy()
+    )
     fanduel_event_urls: List[str] = field(default_factory=list)
     include_under_candidates: bool = True
     pregame_only: bool = True
@@ -138,6 +151,21 @@ class Settings:
 
 def _env_flag(name: str, default: bool) -> bool:
     return os.environ.get(name, str(default)).strip().lower() not in {"0", "false", "no"}
+
+
+def _env_book_list(name: str, default: Sequence[str]) -> List[str]:
+    """Parse a comma-separated, ordered, de-duplicated list of book keys."""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return list(default)
+    if raw.lower() in {"none", "off", "false", "0"}:
+        return []
+    books: List[str] = []
+    for item in raw.split(","):
+        book = item.strip().upper()
+        if book and book not in books:
+            books.append(book)
+    return books
 
 
 def _env_float(name: str, default: float) -> float:
@@ -179,6 +207,9 @@ def load_settings() -> Settings:
         player_aliases=aliases,
         line_source=os.environ.get("LINE_SOURCE", "playerprops").strip().lower(),
         playerprops_book=os.environ.get("PLAYERPROPS_BOOK", "FANDUEL").strip().upper(),
+        playerprops_book_fallbacks=_env_book_list(
+            "PLAYERPROPS_BOOK_FALLBACKS", DEFAULT_PLAYERPROPS_BOOK_FALLBACKS
+        ),
         fanduel_event_urls=fanduel_event_urls,
         include_under_candidates=os.environ.get("INCLUDE_UNDERS", "true").strip().lower() not in {"0", "false", "no"},
         pregame_only=os.environ.get("PREGAME_ONLY", "true").strip().lower() not in {"0", "false", "no"},

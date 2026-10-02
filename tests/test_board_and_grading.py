@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -289,6 +290,35 @@ class BoardTests(unittest.TestCase):
         self.assertIn("== Moneyline (1) ==", text)
         self.assertIn("== Points (1) ==", text)
         self.assertIn("Caitlin Clark", text)
+        fallback_text = render_board(
+            {"Points": [{"subject": "Player", "pick_label": "Under", "line": 10.5,
+                         "price": -115, "price_fallback": True,
+                         "price_source_book": "draftkings", "p_pick": 0.6, "ev": 0.1,
+                         "value": "playable"}]},
+            screen_date="2026-06-01",
+        )
+        self.assertIn("[draftkings]", fallback_text)
+
+    def test_fallback_price_is_attributed_and_does_not_satisfy_primary_health(self) -> None:
+        forecast = replace(
+            _prop_forecast(),
+            price_source_book="draftkings",
+            price_fallback=True,
+        )
+        board = assemble_board(
+            screen_date="2026-06-01",
+            run_id="run-fallback",
+            prop_forecasts=[forecast],
+        )
+        row = board.ledger_rows[0]
+        self.assertEqual(row["price_source_book"], "draftkings")
+        self.assertTrue(row["price_fallback"])
+        self.assertEqual(board.summary["priced_rows"], 1)
+        self.assertEqual(board.summary["primary_priced_rows"], 0)
+        self.assertEqual(board.summary["fallback_priced_rows"], 1)
+        report = health_report(board, require_priced=True)
+        self.assertEqual(report["status"], "degraded")
+        self.assertEqual(report["fallback_priced_rows"], 1)
 
     def test_write_board_and_ledger(self) -> None:
         board = assemble_board(

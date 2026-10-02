@@ -1,6 +1,6 @@
 # WNBA forecast project handoff
 
-Last verified: 2026-09-30, America/Detroit
+Last verified: 2026-10-01, America/Detroit
 
 ## Current topology (Linux only)
 
@@ -280,6 +280,29 @@ inventing a payout. All `paper_play` rows are priced, so the paper ROI record is
 not affected. Historical rows previously left `UNPRICED` can be resolved by
 rerunning that date's grader after this code is deployed; no historical price
 or units are fabricated.
+
+Player-prop price fallback is now explicitly separate from the forecast line:
+FanDuel remains the model/seed line by default. Only if the selected side lacks
+a FanDuel price, the source may attach a configured alternate book's quote when
+it has the exact same numeric line and valid two-sided prices. The default
+priority is DraftKings, Caesars, Hard Rock Bet, then ESPN; configure with
+`PLAYERPROPS_BOOK_FALLBACKS` (`none` disables). Alternate quotes affect only
+execution price, EV/value classification and attribution—not line, forecast
+probability, or selected side. The ledger keeps `source` as line/model book and
+records `price_source_book` plus `price_fallback`; diagnostics split priced ROI
+and outcome calibration by execution book. Fallback rows do not satisfy the
+primary-book priced-row publication health gate. Quote freshness is the
+PlayerProps payload timestamp; the existing `MAX_LINE_AGE_MINUTES` gate applies,
+but the payload has no per-book quote timestamp, so true per-book quote age
+cannot be validated. Among latest player rows with a matching archived raw
+snapshot (448 of 1,078), 86 lacked a selected-side FanDuel price; 23 had a valid
+same-line, two-sided alternate-book quote and 63 did not. On Sep. 30 specifically,
+5 of 18 unpriced rows qualified for fallback; the other 13 remain accuracy-only.
+Those five retrospectively return 4–1 and +0.873u at the captured alternate
+prices; this is a tiny, selected sample, not performance evidence. Across all 23
+historical candidates, only five had settled outcomes at audit time. Keep
+primary and fallback book results separated; do not change the official frozen
+model results based on these samples.
 
 ## Historical context (legacy screener, retired)
 

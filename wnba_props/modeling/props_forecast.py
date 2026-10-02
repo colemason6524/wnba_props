@@ -44,6 +44,8 @@ class PropForecast:
     under_odds: Optional[int]
     flags: Sequence[str] = field(default_factory=list)
     market_source: str = ""
+    price_source_book: str = ""
+    price_fallback: bool = False
     captured_at: str = ""
     dnp_probability: float = 0.0
     void_probability: float = 0.0
@@ -123,7 +125,24 @@ def forecast_prop(
         return None
 
     price = line.over_odds if pick_side == "OVER" else line.under_odds
-    ev = over_ev if pick_side == "OVER" else under_ev
+    price_source_book = line.bookmaker
+    price_fallback = False
+    if not _is_valid_price(price):
+        # The side is already fixed above from the model probabilities (and the
+        # primary prices when EV selection is enabled), so a fallback book can
+        # only ever change the execution price, never the line, pick or
+        # probabilities. The primary over/under odds stay on the forecast.
+        fallback = _alternate_price(line, pick_side)
+        if fallback is None:
+            price_source_book = ""
+        else:
+            price, price_source_book = fallback
+            price_fallback = True
+
+    opposite_probability = (
+        under_probability if pick_side == "OVER" else over_probability
+    )
+    ev = expected_value_with_push(pick_probability, opposite_probability, price)
 
     flags = _flags(features, minutes, pick_side)
 
@@ -153,6 +172,8 @@ def forecast_prop(
         under_odds=line.under_odds,
         flags=flags,
         market_source=line.bookmaker,
+        price_source_book=price_source_book,
+        price_fallback=price_fallback,
         captured_at=line.collected_at.isoformat(),
         dnp_probability=round(minutes.dnp_probability, 4),
         void_probability=round(simulation.void_probability, 4),
@@ -161,6 +182,27 @@ def forecast_prop(
         under_ev=under_ev,
         market_blend_weight=market_weight,
     )
+
+
+def _is_valid_price(price: Optional[int]) -> bool:
+    """American odds are usable only when present and nonzero."""
+    return price is not None and price != 0
+
+
+def _alternate_price(line: PropLine, pick_side: str) -> Optional[tuple[int, str]]:
+    """First eligible configured alternate-book price for the chosen side.
+
+    ``PropLine.alternate_books`` only ever holds the exact primary numeric line
+    with two-sided odds, in configured fallback priority order. It is consulted
+    only when the primary selected-side price is unusable, which keeps the
+    primary book as the model/seed line and makes fallback selection
+    deterministic.
+    """
+    for alternate in line.alternate_books or ():
+        candidate = alternate.price(pick_side)
+        if _is_valid_price(candidate):
+            return candidate, alternate.bookmaker
+    return None
 
 
 def _pick_side(

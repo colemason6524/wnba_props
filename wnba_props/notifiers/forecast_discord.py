@@ -76,6 +76,8 @@ def _render_row(row: dict[str, Any]) -> str:
     line_txt = f" {_format_line(line)}" if line is not None else ""
     price = row.get("price")
     price_txt = f" @{price:+d}" if price is not None else " (unpriced)"
+    if row.get("price_fallback"):
+        price_txt += f" [{row.get('price_source_book') or 'alternate book'}]"
     p_pick = row.get("p_pick")
     p_txt = f"{p_pick:.0%}" if p_pick is not None else "n/a"
     ev = row.get("ev")

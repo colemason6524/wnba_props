@@ -145,6 +145,7 @@ def _config_fingerprint(settings) -> str:
     payload = {
         "supported_prop_types": sorted(settings.supported_prop_types),
         "playerprops_book": settings.playerprops_book,
+        "playerprops_book_fallbacks": settings.playerprops_book_fallbacks,
         "market_blend_weight": settings.market_blend_weight,
         "ev_side_selection": settings.ev_side_selection,
         "season_phase": settings.season_phase,
@@ -507,6 +508,8 @@ def _run_pipeline_once(
             line_source, "raw_snapshot_sha256", ""
         ),
         "bookmaker": settings.playerprops_book,
+        "bookmaker_fallbacks": settings.playerprops_book_fallbacks,
+        "playerprops_diagnostics": line_source.diagnostics,
         "player_logs_loaded": len(logs_by_player),
         "player_logs_freshness": log_freshness,
         "injuries_by_team": {team: len(items) for team, items in team_injuries.items()},
@@ -558,9 +561,11 @@ def _run_pipeline_once(
 
     if coverage_report:
         print(
-            "[pipeline] coverage-report rows={} priced={} health={} reasons={}".format(
+            "[pipeline] coverage-report rows={} priced={} primary={} fallback={} health={} reasons={}".format(
                 board.summary["total_rows"],
                 board.summary["priced_rows"],
+                board.summary["primary_priced_rows"],
+                board.summary["fallback_priced_rows"],
                 health["status"],
                 health["reasons"] or "none",
             )
@@ -574,6 +579,8 @@ def _run_pipeline_once(
     print(f"[pipeline] board -> {board_path}")
     print(
         f"[pipeline] rows={board.summary['total_rows']} priced={board.summary['priced_rows']} "
+        f"primary={board.summary['primary_priced_rows']} "
+        f"fallback={board.summary['fallback_priced_rows']} "
         f"favorable={board.summary['favorable_rows']} health={health['status']}"
     )
 

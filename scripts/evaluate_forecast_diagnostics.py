@@ -2,7 +2,8 @@
 
 Uses the latest capture per identity (the agreed evaluation population) and
 reports the diagnostics that explained the regular-season losses: selected-side
-calibration, projection-versus-line buckets, and units by phase/market/side.
+calibration, projection-versus-line buckets, units by phase/market/side, and
+ROI/calibration per player execution price source book.
 
 Usage:
     python3 scripts/evaluate_forecast_diagnostics.py \
@@ -20,13 +21,25 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from wnba_props.ledger import WIN, LOSS, PUSH, latest_rows, load_rows, roi_summary  # noqa: E402
+from wnba_props.ledger import (  # noqa: E402
+    LOSS,
+    PUSH,
+    UNPRICED,
+    WIN,
+    latest_rows,
+    load_rows,
+    roi_summary,
+)
 
 DEFAULT_LEDGER = REPO_ROOT / "outputs" / "ledger" / "forecast_ledger.jsonl"
 DEFAULT_OUT = REPO_ROOT / "outputs" / "research" / "forecast_diagnostics.json"
 
 _PROB_BINS = ((0.5, 0.55), (0.55, 0.6), (0.6, 0.65), (0.65, 0.7), (0.7, 0.8), (0.8, 1.01))
 _EDGE_BINS = ((0.0, 0.5), (0.5, 1.0), (1.0, 2.0), (2.0, 3.0), (3.0, 5.0), (5.0, 1e9))
+
+# Team-level markets (moneyline/spread/total) have no player execution book, so
+# the per-book view below is scoped to player prop rows.
+_TEAM_MARKETS = frozenset({"ML", "SPREAD", "TOTAL"})
 
 
 def _settled(rows: list[dict]) -> list[dict]:
@@ -102,6 +115,50 @@ def _edge_buckets(rows: list[dict]) -> list[dict]:
     return out
 
 
+def _price_source_book(row: dict) -> str:
+    """Book that supplied the execution price for one settled player row.
+
+    ``price_source_book`` names the book the price actually came from: the
+    primary bookmaker, or an alternate book used because the primary had no
+    valid price. Rows captured before that field existed fall back to
+    ``source``. A row with no price -- or with no book recorded at all -- is
+    ``UNPRICED``, since there is no execution price to attribute.
+    """
+    if row.get("price") is None:
+        return UNPRICED
+    book = str(row.get("price_source_book") or "").strip()
+    if book:
+        return book
+    return str(row.get("source") or "").strip() or UNPRICED
+
+
+def _source_fallback(row: dict) -> bool:
+    """Priced row with no explicit book, grouped through ``source`` instead."""
+    return row.get("price") is not None and not str(
+        row.get("price_source_book") or ""
+    ).strip()
+
+
+def _book_group(rows: list[dict]) -> dict:
+    """ROI and calibration for one execution book, plus fallback accounting.
+
+    ``roi`` uses ``roi_summary``, so outcome-graded rows without financial
+    units (unpriced rows) are naturally omitted; ``calibration`` uses
+    ``_rate``, which keeps every graded WIN/LOSS row whether it was priced or
+    not.
+    """
+    price_fallback_rows = sum(1 for row in rows if row.get("price_fallback"))
+    source_fallback_rows = sum(1 for row in rows if _source_fallback(row))
+    return {
+        "roi": roi_summary(rows),
+        "calibration": _rate(rows),
+        "rows": len(rows),
+        "price_fallback_rows": price_fallback_rows,
+        "source_fallback_rows": source_fallback_rows,
+        "has_fallback_rows": bool(price_fallback_rows or source_fallback_rows),
+    }
+
+
 def build_report(ledger_path: Path) -> dict:
     rows = _settled(latest_rows(load_rows(ledger_path)))
     by_phase: dict[str, list[dict]] = defaultdict(list)
@@ -114,6 +171,14 @@ def build_report(ledger_path: Path) -> dict:
         by_side[f"{row.get('market', '')}:{row.get('pick', '')}"].append(row)
         by_value[str(row.get("value", "unknown")).lower()].append(row)
 
+    player_rows = [
+        row for row in rows if str(row.get("market", "")).upper() not in _TEAM_MARKETS
+    ]
+    by_book: dict[str, list[dict]] = defaultdict(list)
+    for row in player_rows:
+        by_book[_price_source_book(row)].append(row)
+    book_groups = {key: _book_group(items) for key, items in sorted(by_book.items())}
+
     return {
         "overall": roi_summary(rows),
         "calibration": _calibration(rows),
@@ -125,6 +190,20 @@ def build_report(ledger_path: Path) -> dict:
         },
         "by_side": {key: roi_summary(items) for key, items in sorted(by_side.items())},
         "by_value": {key: roi_summary(items) for key, items in sorted(by_value.items())},
+        "by_price_source_book": book_groups,
+        "price_source_book_fallbacks": {
+            "player_rows": len(player_rows),
+            "price_fallback_rows": sum(
+                group["price_fallback_rows"] for group in book_groups.values()
+            ),
+            "source_fallback_rows": sum(
+                group["source_fallback_rows"] for group in book_groups.values()
+            ),
+            "unpriced_rows": len(by_book.get(UNPRICED, [])),
+            "has_fallback_rows": any(
+                group["has_fallback_rows"] for group in book_groups.values()
+            ),
+        },
     }
 
 
@@ -144,6 +223,13 @@ def main(argv: list[str] | None = None) -> int:
     print(
         f"[diagnostics] latest {overall['wins']}-{overall['losses']}-{overall['pushes']} "
         f"{overall['units']:+.3f}u roi={overall['roi']}"
+    )
+    fallbacks = report["price_source_book_fallbacks"]
+    print(
+        f"[diagnostics] price books: {len(report['by_price_source_book'])} "
+        f"price_fallback={fallbacks['price_fallback_rows']} "
+        f"source_fallback={fallbacks['source_fallback_rows']} "
+        f"unpriced={fallbacks['unpriced_rows']}"
     )
     print(f"[diagnostics] wrote {args.out}")
     return 0

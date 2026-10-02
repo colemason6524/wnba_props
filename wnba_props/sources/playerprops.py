@@ -9,8 +9,13 @@ from zoneinfo import ZoneInfo
 
 from ..cache import JsonCache
 from ..config import OUTPUTS_DIR, Settings
-from ..models import Game, PropLine
+from ..models import AlternateBookOdds, Game, PropLine
 from ..utils import fetch_json, normalize_name, safe_float
+
+
+# Alternate-book prices are only usable when they sit on the primary line, so
+# the comparison is exact up to float representation noise.
+LINE_MATCH_TOLERANCE = 1e-9
 
 
 STAT_TO_PROP_TYPE = {
@@ -58,6 +63,7 @@ class PlayerPropsSource:
             "unmatched_events": [],
             "players_seen": 0,
             "selected_book_plays": 0,
+            "alternate_book_lines": 0,
             "lines_found": 0,
         }
         payload = self._fetch_payload()
@@ -117,6 +123,11 @@ class PlayerPropsSource:
                     line_value = safe_float(play.get("line"), default=-1.0)
                     if line_value < 0:
                         continue
+                    alternate_books = self._alternate_book_odds(
+                        stat_payload.get("plays", []), line_value
+                    )
+                    if alternate_books:
+                        self.diagnostics["alternate_book_lines"] += 1
                     lines.append(
                         PropLine(
                             event_id=game.game_id,
@@ -134,6 +145,7 @@ class PlayerPropsSource:
                             under_odds=self._optional_int(play.get("under")),
                             over_decimal=self._optional_float(play.get("overDecimal")),
                             under_decimal=self._optional_float(play.get("underDecimal")),
+                            alternate_books=alternate_books,
                         )
                     )
         deduped = self._dedupe(lines)
@@ -210,6 +222,49 @@ class PlayerPropsSource:
             if str(play.get("source", "")).upper() == self.settings.playerprops_book:
                 return play
         return None
+
+    def _alternate_book_odds(
+        self, plays: object, line_value: float
+    ) -> list[AlternateBookOdds]:
+        """Same-line, two-sided alternate-book odds in configured priority order.
+
+        The primary configured book stays the model/seed line. Every other book
+        contributes a price only when it quotes the exact same numeric line and
+        carries valid nonzero American odds on both sides, so a fallback can
+        never move the line the model was projected against. Ordering follows
+        ``Settings.playerprops_book_fallbacks`` rather than payload order, which
+        makes price selection deterministic.
+        """
+        if not isinstance(plays, list):
+            return []
+        plays_by_book: dict[str, list[dict]] = {}
+        for play in plays:
+            if not isinstance(play, dict):
+                continue
+            book = str(play.get("source") or "").strip().upper()
+            if not book or book == self.settings.playerprops_book:
+                continue
+            plays_by_book.setdefault(book, []).append(play)
+
+        alternates: list[AlternateBookOdds] = []
+        for book in self.settings.playerprops_book_fallbacks:
+            for play in plays_by_book.get(book, []):
+                candidate_line = safe_float(play.get("line"), default=-1.0)
+                if candidate_line < 0 or abs(candidate_line - line_value) > LINE_MATCH_TOLERANCE:
+                    continue
+                over_odds = self._optional_int(play.get("over"))
+                under_odds = self._optional_int(play.get("under"))
+                if not over_odds or not under_odds:
+                    continue
+                alternates.append(
+                    AlternateBookOdds(
+                        bookmaker=book.lower(),
+                        over_odds=over_odds,
+                        under_odds=under_odds,
+                    )
+                )
+                break
+        return alternates
 
     def _normalize_team(self, value: str) -> str:
         cleaned = value.strip().upper()

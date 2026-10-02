@@ -4,9 +4,10 @@ import tempfile
 import unittest
 from datetime import date, datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 from wnba_props.features.player import PlayerFeatures
-from wnba_props.models import PropLine
+from wnba_props.models import AlternateBookOdds, PropLine
 from wnba_props.modeling.calibration import (
     ResidualArtifact,
     calibrate_probability,
@@ -15,6 +16,7 @@ from wnba_props.modeling.calibration import (
     save_residual_artifact,
 )
 from wnba_props.modeling.minutes import dnp_probability, project_minutes, simulate_prop
+from wnba_props.modeling.props_forecast import forecast_prop
 from wnba_props.modeling.rates import game_environment_factor, project_rate
 from wnba_props.features.positions import position_class
 from wnba_props.modeling.value import (
@@ -294,6 +296,229 @@ class DnpProbabilityTests(unittest.TestCase):
             1.0,
             places=6,
         )
+
+
+class AlternatePriceFallbackTests(unittest.TestCase):
+    """Alternate books supply an execution price only, after the side is fixed."""
+
+    def _line(
+        self,
+        over: Optional[int] = None,
+        under: Optional[int] = None,
+        alternates: tuple[AlternateBookOdds, ...] = (),
+    ) -> PropLine:
+        return PropLine(
+            event_id="evt",
+            game_date=date(2026, 6, 10),
+            player_name_raw="Test Player",
+            player_name_norm="test player",
+            team="NY",
+            opponent="PHX",
+            prop_type="PTS",
+            line=20.5,
+            bookmaker="fanduel",
+            source="fixture",
+            collected_at=datetime(2026, 6, 10, 15, 0, tzinfo=timezone.utc),
+            over_odds=over,
+            under_odds=under,
+            alternate_books=list(alternates),
+        )
+
+    def _forecast(self, line: PropLine, **kwargs):
+        artifact = _artifact(pairs=((0.5, 0.02), (-0.5, -0.02)) * 25)
+        return forecast_prop(
+            features=_features(), line=line, residuals=artifact, **kwargs
+        )
+
+    def _opposite(self, forecast) -> float:
+        if forecast.pick_side == "OVER":
+            return forecast.under_probability
+        return forecast.over_probability
+
+    def test_valid_primary_price_is_used_and_attributed_to_primary_book(self) -> None:
+        primary = self._forecast(self._line(over=-110, under=-110))
+        with_alternates = self._forecast(
+            self._line(
+                over=-110,
+                under=-110,
+                alternates=(AlternateBookOdds("draftkings", 150, 150),),
+            )
+        )
+        assert primary is not None and with_alternates is not None
+
+        self.assertEqual(-110, with_alternates.price)
+        self.assertEqual("fanduel", with_alternates.price_source_book)
+        self.assertFalse(with_alternates.price_fallback)
+        self.assertEqual(primary.pick_side, with_alternates.pick_side)
+        self.assertAlmostEqual(primary.ev or 0.0, with_alternates.ev or 0.0)
+        primary_side_ev = (
+            with_alternates.over_ev
+            if with_alternates.pick_side == "OVER"
+            else with_alternates.under_ev
+        )
+        self.assertAlmostEqual(primary_side_ev, with_alternates.ev)
+        self.assertEqual("fanduel", with_alternates.market_source)
+
+    def test_probabilities_and_pick_identical_between_primary_and_fallback(self) -> None:
+        primary = self._forecast(self._line(over=-110, under=-110))
+        fallback = self._forecast(
+            self._line(
+                over=None,
+                under=None,
+                alternates=(AlternateBookOdds("draftkings", -120, 120),),
+            )
+        )
+        assert primary is not None and fallback is not None
+
+        self.assertEqual(primary.pick_side, fallback.pick_side)
+        self.assertAlmostEqual(primary.pick_probability, fallback.pick_probability)
+        self.assertAlmostEqual(primary.over_probability, fallback.over_probability)
+        self.assertAlmostEqual(primary.under_probability, fallback.under_probability)
+        self.assertAlmostEqual(primary.push_probability, fallback.push_probability)
+        self.assertAlmostEqual(primary.projected_mean, fallback.projected_mean)
+        self.assertEqual(primary.line, fallback.line)
+        self.assertEqual("fanduel", fallback.bookmaker)
+
+    def test_fallback_price_is_attributed_and_only_reprices_the_pick(self) -> None:
+        alternate = AlternateBookOdds("draftkings", -120, 120)
+        forecast = self._forecast(
+            self._line(over=None, under=None, alternates=(alternate,))
+        )
+        assert forecast is not None
+
+        expected_price = alternate.price(forecast.pick_side)
+        self.assertEqual(expected_price, forecast.price)
+        self.assertEqual("draftkings", forecast.price_source_book)
+        self.assertTrue(forecast.price_fallback)
+        self.assertAlmostEqual(
+            expected_value_with_push(
+                forecast.pick_probability, self._opposite(forecast), expected_price
+            ),
+            forecast.ev,
+        )
+        # Primary book attribution for the line/market side is unchanged.
+        self.assertEqual("fanduel", forecast.market_source)
+        self.assertEqual("fanduel", forecast.bookmaker)
+        self.assertEqual(20.5, forecast.line)
+
+    def test_primary_over_under_odds_are_preserved_with_a_fallback(self) -> None:
+        forecast = self._forecast(
+            self._line(
+                over=None,
+                under=-105,
+                alternates=(AlternateBookOdds("draftkings", -120, 120),),
+            )
+        )
+        assert forecast is not None
+
+        self.assertIsNone(forecast.over_odds)
+        self.assertEqual(-105, forecast.under_odds)
+        if forecast.pick_side == "OVER":
+            self.assertEqual(-120, forecast.price)
+            self.assertEqual("draftkings", forecast.price_source_book)
+            self.assertTrue(forecast.price_fallback)
+        else:
+            self.assertEqual(-105, forecast.price)
+            self.assertEqual("fanduel", forecast.price_source_book)
+            self.assertFalse(forecast.price_fallback)
+
+    def test_zero_primary_odds_is_treated_as_missing(self) -> None:
+        forecast = self._forecast(
+            self._line(
+                over=0,
+                under=0,
+                alternates=(AlternateBookOdds("draftkings", -110, 110),),
+            )
+        )
+        assert forecast is not None
+
+        self.assertTrue(forecast.price_fallback)
+        self.assertEqual("draftkings", forecast.price_source_book)
+        self.assertEqual(0, forecast.over_odds)
+        self.assertEqual(0, forecast.under_odds)
+
+    def test_first_eligible_alternate_wins_in_priority_order(self) -> None:
+        forecast = self._forecast(
+            self._line(
+                over=None,
+                under=None,
+                alternates=(
+                    AlternateBookOdds("draftkings", -120, 120),
+                    AlternateBookOdds("caesars", 200, 200),
+                ),
+            )
+        )
+        assert forecast is not None
+
+        self.assertEqual("draftkings", forecast.price_source_book)
+        self.assertEqual(-120 if forecast.pick_side == "OVER" else 120, forecast.price)
+
+    def test_ineligible_alternates_are_skipped(self) -> None:
+        forecast = self._forecast(
+            self._line(
+                over=None,
+                under=None,
+                alternates=(
+                    AlternateBookOdds("draftkings", 0, 0),
+                    AlternateBookOdds("caesars", 0, 0),
+                    AlternateBookOdds("espn", -105, 105),
+                ),
+            )
+        )
+        assert forecast is not None
+
+        self.assertEqual("espn", forecast.price_source_book)
+        self.assertTrue(forecast.price_fallback)
+
+    def test_missing_fallback_preserves_unpriced(self) -> None:
+        for alternates in ((), (AlternateBookOdds("draftkings", 0, 0),)):
+            with self.subTest(alternates=alternates):
+                forecast = self._forecast(
+                    self._line(over=None, under=None, alternates=alternates)
+                )
+                assert forecast is not None
+
+                self.assertIsNone(forecast.price)
+                self.assertIsNone(forecast.ev)
+                self.assertEqual("unpriced", forecast.value_label)
+                self.assertEqual("", forecast.price_source_book)
+                self.assertFalse(forecast.price_fallback)
+
+    def test_ev_selection_inputs_stay_on_primary_prices(self) -> None:
+        plain = self._forecast(self._line(over=-110, under=-110), ev_selection=True)
+        with_alternates = self._forecast(
+            self._line(
+                over=-110,
+                under=-110,
+                alternates=(AlternateBookOdds("draftkings", 500, 500),),
+            ),
+            ev_selection=True,
+        )
+        assert plain is not None and with_alternates is not None
+
+        self.assertEqual(plain.pick_side, with_alternates.pick_side)
+        self.assertEqual(plain.over_ev, with_alternates.over_ev)
+        self.assertEqual(plain.under_ev, with_alternates.under_ev)
+        self.assertEqual(-110, with_alternates.price)
+        self.assertFalse(with_alternates.price_fallback)
+
+    def test_fallback_price_cannot_flip_the_selected_side(self) -> None:
+        model_only = self._forecast(self._line(over=None, under=None), ev_selection=True)
+        with_wild_alternate = self._forecast(
+            self._line(
+                over=None,
+                under=None,
+                alternates=(AlternateBookOdds("draftkings", 10000, -10000),),
+            ),
+            ev_selection=True,
+        )
+        assert model_only is not None and with_wild_alternate is not None
+
+        self.assertEqual(model_only.pick_side, with_wild_alternate.pick_side)
+        self.assertAlmostEqual(
+            model_only.pick_probability, with_wild_alternate.pick_probability
+        )
+        self.assertNotEqual(model_only.ev, with_wild_alternate.ev)
 
 
 class PositionTests(unittest.TestCase):

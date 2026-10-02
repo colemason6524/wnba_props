@@ -38,6 +38,19 @@ enabled. Ledger rows carry a `paper_play` flag (`value == "playable"`) so the
 full forecast record can be graded alongside the positive-value subset. Prices
 classify value and determine flat-unit paper ROI.
 
+Player props use the configured primary line (default FanDuel). If the model's
+selected side has no valid primary-book price, the price layer may use an
+ordered alternate-book quote only when it is for the exact same line and both
+sides are priced. Default order: DraftKings, Caesars, Hard Rock Bet, ESPN.
+Fallback odds affect price/EV/value only; they do not change the line, model
+probabilities, or selected side. Ledger rows record `price_source_book` and
+`price_fallback`, while diagnostics split ROI/calibration by execution book.
+Quotes inherit the payload capture timestamp and existing `MAX_LINE_AGE_MINUTES`
+check. If no eligible same-line quote is available, the forecast remains
+accuracy-only/unpriced. Set `PLAYERPROPS_BOOK_FALLBACKS` to an ordered
+comma-separated list to change the fallback order; an explicit `none` disables
+fallbacks.
+
 ## Commands
 
 Run a board locally without Discord:
