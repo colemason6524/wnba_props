@@ -132,8 +132,8 @@ def _price_source_book(row: dict) -> str:
     return str(row.get("source") or "").strip() or UNPRICED
 
 
-def _source_fallback(row: dict) -> bool:
-    """Priced row with no explicit book, grouped through ``source`` instead."""
+def _legacy_source_attribution(row: dict) -> bool:
+    """Priced legacy row attributed through ``source`` because no book field exists."""
     return row.get("price") is not None and not str(
         row.get("price_source_book") or ""
     ).strip()
@@ -148,14 +148,16 @@ def _book_group(rows: list[dict]) -> dict:
     not.
     """
     price_fallback_rows = sum(1 for row in rows if row.get("price_fallback"))
-    source_fallback_rows = sum(1 for row in rows if _source_fallback(row))
+    legacy_source_attributed_rows = sum(
+        1 for row in rows if _legacy_source_attribution(row)
+    )
     return {
         "roi": roi_summary(rows),
         "calibration": _rate(rows),
         "rows": len(rows),
         "price_fallback_rows": price_fallback_rows,
-        "source_fallback_rows": source_fallback_rows,
-        "has_fallback_rows": bool(price_fallback_rows or source_fallback_rows),
+        "legacy_source_attributed_rows": legacy_source_attributed_rows,
+        "has_fallback_rows": bool(price_fallback_rows),
     }
 
 
@@ -196,8 +198,8 @@ def build_report(ledger_path: Path) -> dict:
             "price_fallback_rows": sum(
                 group["price_fallback_rows"] for group in book_groups.values()
             ),
-            "source_fallback_rows": sum(
-                group["source_fallback_rows"] for group in book_groups.values()
+            "legacy_source_attributed_rows": sum(
+                group["legacy_source_attributed_rows"] for group in book_groups.values()
             ),
             "unpriced_rows": len(by_book.get(UNPRICED, [])),
             "has_fallback_rows": any(
@@ -228,7 +230,7 @@ def main(argv: list[str] | None = None) -> int:
     print(
         f"[diagnostics] price books: {len(report['by_price_source_book'])} "
         f"price_fallback={fallbacks['price_fallback_rows']} "
-        f"source_fallback={fallbacks['source_fallback_rows']} "
+        f"legacy_source_attributed={fallbacks['legacy_source_attributed_rows']} "
         f"unpriced={fallbacks['unpriced_rows']}"
     )
     print(f"[diagnostics] wrote {args.out}")

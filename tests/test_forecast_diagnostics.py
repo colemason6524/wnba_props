@@ -61,6 +61,20 @@ class PriceSourceDiagnosticsTests(unittest.TestCase):
                 "snapshot_id": "s4",
                 "phase": "playoff",
                 "game_date": "2026-09-30",
+                "market": "PTS",
+                "subject": "Legacy Player",
+                "line": 11.5,
+                "source": "fanduel",
+                "price": -110,
+                "probability": 0.6,
+                "outcome": "LOSS",
+                "units": -1.0,
+                "graded": True,
+            },
+            {
+                "snapshot_id": "s5",
+                "phase": "playoff",
+                "game_date": "2026-09-30",
                 "market": "ML",
                 "subject": "A @ B",
                 "source": "bovada",
@@ -81,12 +95,17 @@ class PriceSourceDiagnosticsTests(unittest.TestCase):
             set(report["by_price_source_book"]),
         )
         books = report["by_price_source_book"]
-        self.assertEqual(1, books["fanduel"]["roi"]["plays"])
+        self.assertEqual(2, books["fanduel"]["roi"]["plays"])
+        self.assertEqual(1, books["fanduel"]["legacy_source_attributed_rows"])
         self.assertEqual(1, books["draftkings"]["roi"]["losses"])
         self.assertEqual(1, books["draftkings"]["price_fallback_rows"])
         self.assertEqual(1, books["UNPRICED"]["calibration"]["n"])
         self.assertEqual(0, books["UNPRICED"]["roi"]["plays"])
         self.assertEqual(1, report["price_source_book_fallbacks"]["unpriced_rows"])
+        self.assertEqual(
+            1,
+            report["price_source_book_fallbacks"]["legacy_source_attributed_rows"],
+        )
         self.assertTrue(report["price_source_book_fallbacks"]["has_fallback_rows"])
 
 
