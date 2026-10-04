@@ -1,21 +1,20 @@
 {
   "schema_version": 1,
   "project_id": "wnba_props",
-  "updated_at": "2026-09-30T23:48:45-04:00",
+  "updated_at": "2026-10-04T02:45:51.491117+00:00",
   "status": "observing",
-  "summary": "Playoff phase is board-verified: the Sep 29 capture (pregame+evening, 87 identities, phase=playoff, health=ok) was graded cleanly on the Sep 30 morning timer. Cumulative playoff after two slates: 124-123, -22.042u, ROI -8.92% (247 settled). Team markets positive (+3.867u, 9-7); player props bleeding (-25.91u, -11.31%) led by AST (-16.344u, -32.05%, losing on both sides, clustered in 28-34 projected-minutes guards; bootstrap CI [-54.9%, -8.1%] so it is a consistent effect, not one-slate noise). PTS/3PM carry the regular-season calibration warnings forward; REB holds (+4.01u). Playable subset 65-73, -11.137u. Sep 30 slate (WSH@ATL, GS@DAL) captured twice (99 identities, 45/47 paper plays); games were in progress at check-in. All production code now committed: playoff ESPN boxscore-window log fallback, freshness telemetry, --coverage-report pre-capture gate (deployed to VM at commit 46cb0ce, 186 tests green on both copies). No model/config change made - policy keeps the frozen version prospectively.",
-  "experiment": "Measure the frozen forecast version through the postseason; separate team-market and player-prop books; do not refit production artifacts or tune on the same slates being measured.",
-  "watching_for": "Oct 1 morning grade settling the Sep 30 slate (~99 identities from the evening capture, pregame-only rows from pregame prices); AST bleed repeating on slate 3; Oct 1 pregame log freshness: IND/LV subjects must include their Sep 29 games (latest_log_date 2026-09-29, stale players shrinking). Flag: missing/degraded board, uncovered game, stale-logs anomaly, timer failure.",
-  "next_action": "Check the Oct 1 06:17 ET grade output and phase_summary team/player splits; after 5-7 slates run the calibration review (minutes distribution vs regular-season fit, AST lineup variance, market-blend/EV candidates) before any versioned model change.",
+  "summary": "Reviewed Oct 1 playoff grade (graded Oct 2): 21-17-0, -1.395u (-3.67% ROI). Team markets strong playoff-cumulative (+11.96u, +44.3% ROI); player props dragging (-44.23u, -13.05%). 33 player props pending. a51bfac fallback deployed, not yet live-tested. No intervention needed.",
+  "experiment": "Prospectively evaluate the frozen playoff forecast; keep team/player markets and primary/fallback execution books separate; accuracy-only unpriced forecasts never contribute units.",
+  "watching_for": "Oct 1 grade settles; unpriced outcomes remain separate from priced ROI. On next capture with code_commit a51bfac or later, verify exact-line/two-sided fallback attribution against archived source snapshot; then inspect per-book diagnostics. Flag missing/degraded boards, uncovered games, stale logs, or timer failures.",
+  "next_action": "Review next grade and pending movement; verify fallback on first live board.",
   "deployed": true,
-  "git_commit": "46cb0ce",
+  "git_commit": "a51bfac",
   "check_back": {
     "kind": "grade_event",
-    "label": "after the Sep 30 playoff slate is graded",
+    "label": "after the next WNBA playoff slate is graded",
     "target": null,
-    "baseline": "2026-09-26T00:07:22-04:00",
-    "events": [],
-    "target_date": "2026-09-30"
+    "baseline": "2026-10-04T02:45:51.491117+00:00",
+    "target_date": "2026-10-04"
   },
   "docs": [
     {
