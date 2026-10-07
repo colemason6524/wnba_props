@@ -1,20 +1,21 @@
 {
   "schema_version": 1,
   "project_id": "wnba_props",
-  "updated_at": "2026-10-04T02:45:51.491117+00:00",
+  "updated_at": "2026-10-07T17:37:00+00:00",
   "status": "observing",
-  "summary": "Reviewed Oct 1 playoff grade (graded Oct 2): 21-17-0, -1.395u (-3.67% ROI). Team markets strong playoff-cumulative (+11.96u, +44.3% ROI); player props dragging (-44.23u, -13.05%). 33 player props pending. a51bfac fallback deployed, not yet live-tested. No intervention needed.",
-  "experiment": "Prospectively evaluate the frozen playoff forecast; keep team/player markets and primary/fallback execution books separate; accuracy-only unpriced forecasts never contribute units.",
-  "watching_for": "Oct 1 grade settles; unpriced outcomes remain separate from priced ROI. On next capture with code_commit a51bfac or later, verify exact-line/two-sided fallback attribution against archived source snapshot; then inspect per-book diagnostics. Flag missing/degraded boards, uncovered games, stale logs, or timer failures.",
-  "next_action": "Review next grade and pending movement; verify fallback on first live board.",
+  "summary": "OUT-starter PAR adjustment wired into team totals/spreads (build_team_features debits ppg_last_5/10/season + margin_last_5; star_out flag for retrain). Tests: new tests/test_team_injuries.py 7 passed, full suite 226 passed + 2 subtests. Dream example: healthy total 164.0 vs Gray OUT 153.0 (delta 11.0 = 17ppg-6.0 replacement).",
+  "experiment": null,
+  "watching_for": null,
+  "next_action": null,
   "deployed": true,
-  "git_commit": "a51bfac",
+  "git_commit": "9618948",
   "check_back": {
     "kind": "grade_event",
-    "label": "after the next WNBA playoff slate is graded",
+    "label": "team-injury fix deployed",
     "target": null,
-    "baseline": "2026-10-04T02:45:51.491117+00:00",
-    "target_date": "2026-10-04"
+    "baseline": "2026-10-07T17:37:00+00:00",
+    "events": [],
+    "target_date": null
   },
   "docs": [
     {
