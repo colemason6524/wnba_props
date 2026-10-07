@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
 from datetime import date
 from statistics import mean
 from typing import Iterable, Mapping, Optional, Sequence
 
+from ..config import TEAM_INJURY_REPLACEMENT_PPG, TEAM_INJURY_STARTER_MINUTES
 from ..models import PlayerGameLog
+from ..rotation import is_redistributable_out
 
 
 @dataclass(frozen=True)
@@ -36,6 +39,8 @@ class TeamFeatures:
     pace_proxy_last_5: float
     pace_proxy_season: float
     star_available: bool = True
+    star_out: bool = False
+    star_out_points: float = 0.0
 
 
 def build_team_game_results(
@@ -101,6 +106,62 @@ def _resolve_home(
     return bool(home_map.get((game_date, team), False))
 
 
+def _starter_base_minutes(
+    logs: Sequence[PlayerGameLog],
+    *,
+    window: int = 10,
+) -> float:
+    """Recency-weighted base minutes, mirroring board._base_minutes_for_player."""
+    eligible = [log for log in logs if log.did_play and log.minutes > 0.0]
+    if not eligible:
+        return 0.0
+    eligible.sort(key=lambda log: log.game_date, reverse=True)
+    recent = eligible[:window]
+    weights = [0.5 ** (index / 6.0) for index in range(len(recent))]
+    recency = sum(log.minutes * w for log, w in zip(recent, weights)) / sum(weights)
+    season = sum(log.minutes for log in eligible) / len(eligible)
+    return 0.65 * recency + 0.35 * season
+
+
+def _season_ppg(logs: Sequence[PlayerGameLog]) -> float:
+    """Mean points per game over games played."""
+    eligible = [log for log in logs if log.did_play]
+    if not eligible:
+        return 0.0
+    return sum(float(log.points) for log in eligible) / len(eligible)
+
+
+def out_starter_points_above_replacement(
+    *,
+    team: str,
+    player_statuses: Optional[Mapping[str, str]] = None,
+    logs_by_player: Optional[Mapping[str, Sequence[PlayerGameLog]]] = None,
+    replacement_ppg: float = TEAM_INJURY_REPLACEMENT_PPG,
+    starter_minutes: float = TEAM_INJURY_STARTER_MINUTES,
+) -> float:
+    """Points above replacement lost to OUT starters on ``team``.
+
+    Only players whose status vacates minutes (out / injured reserve /
+    suspended -- see rotation.is_redistributable_out) with starter-level
+    base minutes count. Each counts ``max(0, season_ppg - replacement_ppg)``.
+    Day-to-day and other uncertain statuses never count.
+    """
+    lost = 0.0
+    for norm, status in (player_statuses or {}).items():
+        if not is_redistributable_out(status):
+            continue
+        logs = (logs_by_player or {}).get(norm, [])
+        if not logs:
+            continue
+        latest = max(logs, key=lambda log: log.game_date)
+        if latest.team != team:
+            continue
+        if _starter_base_minutes(logs) < starter_minutes:
+            continue
+        lost += max(0.0, _season_ppg(logs) - replacement_ppg)
+    return lost
+
+
 def build_team_features(
     *,
     team: str,
@@ -109,6 +170,9 @@ def build_team_features(
     results: Sequence[TeamGameResult],
     is_home: Optional[bool] = None,
     star_available: bool = True,
+    player_statuses: Optional[Mapping[str, str]] = None,
+    logs_by_player: Optional[Mapping[str, Sequence[PlayerGameLog]]] = None,
+    replacement_ppg: float = TEAM_INJURY_REPLACEMENT_PPG,
 ) -> Optional[TeamFeatures]:
     """Point-in-time team features for a single scheduled game.
 
@@ -149,7 +213,7 @@ def build_team_features(
         else _resolve_home(team, opponent, game_date, None)
     )
 
-    return TeamFeatures(
+    base = TeamFeatures(
         team=team,
         opponent=opponent,
         game_date=game_date,
@@ -167,6 +231,26 @@ def build_team_features(
         pace_proxy_season=mean(combined_ppr),
         star_available=star_available,
     )
+
+    lost = 0.0
+    if player_statuses and logs_by_player:
+        lost = out_starter_points_above_replacement(
+            team=team,
+            player_statuses=player_statuses,
+            logs_by_player=logs_by_player,
+            replacement_ppg=replacement_ppg,
+        )
+    if lost > 0.0:
+        return dataclasses.replace(
+            base,
+            ppg_last_5=base.ppg_last_5 - lost,
+            ppg_last_10=base.ppg_last_10 - lost,
+            ppg_season=base.ppg_season - lost,
+            margin_last_5=base.margin_last_5 - lost,
+            star_out=True,
+            star_out_points=lost,
+        )
+    return base
 
 
 def _rest_days(last_game: date, game_date: date) -> int:

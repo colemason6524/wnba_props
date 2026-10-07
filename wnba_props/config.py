@@ -45,6 +45,14 @@ DEFAULT_PLAYERPROPS_BOOK_FALLBACKS = [
 
 DISCORD_SUPPRESS_FLAGS = frozenset({"SEASON-", "TEAM_OUT"})
 
+#: Points per game credited to a replacement-level player when a starter is
+#: ruled out (team-injury adjustment in features.team).
+TEAM_INJURY_REPLACEMENT_PPG = 6.0
+
+#: Minimum base minutes for an OUT player to count as a starter whose
+#: points-above-replacement are removed from team scoring features.
+TEAM_INJURY_STARTER_MINUTES = 24.0
+
 ESPN_TO_TEAM_ABBR = {
     "Atlanta Dream": "ATL",
     "Chicago Sky": "CHI",

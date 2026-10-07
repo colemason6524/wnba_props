@@ -396,6 +396,8 @@ def build_daily_board(
                 game_date=screen_day,
                 results=list(team_results),
                 is_home=True,
+                player_statuses=player_statuses,
+                logs_by_player=logs_by_player,
             )
             away = build_team_features(
                 team=game.away_team,
@@ -403,6 +405,8 @@ def build_daily_board(
                 game_date=screen_day,
                 results=list(team_results),
                 is_home=False,
+                player_statuses=player_statuses,
+                logs_by_player=logs_by_player,
             )
             if home is None or away is None:
                 continue
