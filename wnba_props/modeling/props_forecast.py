@@ -61,6 +61,7 @@ def forecast_prop(
     line: PropLine,
     residuals: ResidualArtifact,
     player_status: str = "",
+    rotation_bump: float = 0.0,
     league_baseline: Optional[float] = None,
     positional_baseline: Optional[float] = None,
     game_total: Optional[float] = None,
@@ -69,7 +70,9 @@ def forecast_prop(
     market_weight: float = 0.0,
     ev_selection: bool = False,
 ) -> Optional[PropForecast]:
-    minutes = project_minutes(features, player_status=player_status)
+    minutes = project_minutes(
+        features, player_status=player_status, rotation_bump=rotation_bump
+    )
     if minutes.availability_excluded:
         return None
 

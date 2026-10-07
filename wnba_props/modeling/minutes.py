@@ -86,6 +86,7 @@ def project_minutes(
     *,
     player_status: str = "",
     recent_weight: float = 0.65,
+    rotation_bump: float = 0.0,
 ) -> MinutesProjection:
     status = player_status.strip().lower()
     excluded = status in _EXCLUDED_STATUSES
@@ -109,6 +110,9 @@ def project_minutes(
     starter_probability = _clamp(features.minutes_avg_l5 / 30.0, 0.0, 1.0)
     if features.starting:
         starter_probability = max(starter_probability, 0.6)
+
+    if rotation_bump:
+        projected = projected + max(0.0, rotation_bump)
 
     return MinutesProjection(
         projected_minutes=_clamp(projected, 0.0, 40.0),

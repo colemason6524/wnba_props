@@ -19,6 +19,7 @@ from .modeling.game_forecast import (
     forecast_game,
 )
 from .modeling.props_forecast import PropForecast, forecast_prop
+from .rotation import is_redistributable_out, redistribute_out_minutes
 from .modeling.rates import LEAGUE_GAME_TOTAL_BASELINE
 
 
@@ -429,6 +430,13 @@ def build_daily_board(
         total_by_team[forecast.away_team] = forecast.total_projection
     league_game_total = _league_game_total_baseline(team_results)
 
+    rotation_bumps = _rotation_minute_bumps(
+        prop_lines=prop_lines,
+        logs_by_player=logs_by_player,
+        player_statuses=player_statuses,
+        player_positions=player_positions,
+    )
+
     for line in prop_lines:
         artifact = residual_artifacts.get(line.prop_type.upper())
         if artifact is None:
@@ -451,6 +459,7 @@ def build_daily_board(
             line=line,
             residuals=artifact,
             player_status=player_statuses.get(line.player_name_norm, ""),
+            rotation_bump=rotation_bumps.get(line.player_name_norm, 0.0),
             league_baseline=league_baselines.get(line.prop_type.upper()),
             positional_baseline=positional_baselines.get(
                 (line.prop_type.upper(), features.position)
@@ -623,6 +632,78 @@ def _ledger_row(
 
 def _format_signed(value: float) -> str:
     return f"{value:+.1f}"
+
+
+def _rotation_minute_bumps(
+    *,
+    prop_lines: Sequence[PropLine],
+    logs_by_player: Mapping[str, Sequence[PlayerGameLog]],
+    player_statuses: Mapping[str, str],
+    player_positions: Mapping[str, str],
+) -> dict[str, float]:
+    """Redistribute OUT players' projected minutes to healthy teammates.
+
+    Runs after the excluded (OUT/IR/suspended) set is implied by
+    ``player_statuses`` and before projected minutes feed ``forecast_prop``.
+    The roster is sourced from game logs (not prop lines) so an OUT star
+    whose line was pulled still vacates minutes. Day-to-day and other
+    uncertain statuses never vacate minutes.
+    """
+    roster_minutes: dict[str, float] = {}
+    meta: dict[str, dict[str, object]] = {}
+    for norm, logs in logs_by_player.items():
+        base = _base_minutes_for_player(logs)
+        if base <= 0.0:
+            continue
+        roster_minutes[norm] = base
+        latest = max(logs, key=lambda log: log.game_date)
+        meta[norm] = {
+            "team": latest.team,
+            "position": player_positions.get(norm, ""),
+            "role": "starter" if base >= 24.0 else "bench",
+            "depth": 0 if base >= 24.0 else 1,
+        }
+    # Rotation depth within each team: higher base minutes = higher in rotation.
+    by_team: dict[str, list[str]] = {}
+    for norm in roster_minutes:
+        by_team.setdefault(str(meta[norm]["team"]), []).append(norm)
+    for team_norms in by_team.values():
+        team_norms.sort(key=lambda norm: roster_minutes[norm], reverse=True)
+        for depth, norm in enumerate(team_norms):
+            meta[norm]["depth"] = depth
+    out_entries: list[dict[str, object]] = []
+    for norm, status in player_statuses.items():
+        if norm not in roster_minutes:
+            continue
+        if status and is_redistributable_out(status):
+            out_entries.append(
+                {
+                    "player_name_norm": norm,
+                    "team": meta[norm]["team"],
+                    "status": status,
+                    "base_minutes": roster_minutes[norm],
+                    "position": meta[norm]["position"],
+                }
+            )
+    if not out_entries:
+        return {}
+    bumps = redistribute_out_minutes(out_entries, roster_minutes, meta)
+    # Only healthy players with a priced line can absorb minutes.
+    line_norms = {line.player_name_norm for line in prop_lines}
+    return {norm: bump for norm, bump in bumps.items() if norm in line_norms}
+
+
+def _base_minutes_for_player(logs: Sequence[PlayerGameLog]) -> float:
+    """Base minutes mirroring ``project_minutes`` 0.65 recency / 0.35 season."""
+    eligible = [log for log in logs if log.did_play and log.minutes > 0.0]
+    if not eligible:
+        return 0.0
+    eligible.sort(key=lambda log: log.game_date, reverse=True)
+    recent = eligible[:10]
+    weights = [0.5 ** (index / 6.0) for index in range(len(recent))]
+    recency = sum(log.minutes * w for log, w in zip(recent, weights)) / sum(weights)
+    season = sum(log.minutes for log in eligible) / len(eligible)
+    return 0.65 * recency + 0.35 * season
 
 
 def _league_game_total_baseline(team_results: Sequence[TeamGameResult]) -> float:
