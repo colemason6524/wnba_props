@@ -53,6 +53,11 @@ class PropForecast:
     over_ev: Optional[float] = None
     under_ev: Optional[float] = None
     market_blend_weight: float = 0.0
+    rotation_bump: float = 0.0
+    base_minutes: float = 0.0
+    pre_bump_minutes: float = 0.0
+    injury_event_ids: tuple = ()
+    starter_prob: float = 0.0
 
 
 def forecast_prop(
@@ -147,6 +152,9 @@ def forecast_prop(
     )
     ev = expected_value_with_push(pick_probability, opposite_probability, price)
 
+    bump_value = max(0.0, rotation_bump or 0.0)
+    pre_bump_value = max(0.0, minutes.projected_minutes - bump_value)
+
     flags = _flags(features, minutes, pick_side)
 
     return PropForecast(
@@ -184,6 +192,11 @@ def forecast_prop(
         over_ev=over_ev,
         under_ev=under_ev,
         market_blend_weight=market_weight,
+        rotation_bump=round(bump_value, 4),
+        base_minutes=round(pre_bump_value, 4),
+        pre_bump_minutes=round(pre_bump_value, 4),
+        injury_event_ids=(),
+        starter_prob=round(minutes.starter_probability, 4),
     )
 
 

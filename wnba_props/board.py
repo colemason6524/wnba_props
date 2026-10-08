@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace as _replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
@@ -19,7 +19,11 @@ from .modeling.game_forecast import (
     forecast_game,
 )
 from .modeling.props_forecast import PropForecast, forecast_prop
-from .rotation import is_redistributable_out, redistribute_out_minutes
+from .rotation import (
+    is_redistributable_out,
+    redistribute_out_minutes,
+    redistribute_out_minutes_explained,
+)
 from .modeling.rates import LEAGUE_GAME_TOTAL_BASELINE
 
 
@@ -42,6 +46,7 @@ class ForecastBoard:
     ledger_rows: list[dict[str, Any]] = field(default_factory=list)
     summary: dict[str, Any] = field(default_factory=dict)
     provenance: dict[str, Any] = field(default_factory=dict)
+    injury_trace: dict[str, Any] = field(default_factory=dict)
     created_at: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
@@ -260,6 +265,13 @@ def build_prop_rows(
                 "captured_at": forecast.captured_at,
                 "dnp_probability": forecast.dnp_probability,
                 "void_probability": forecast.void_probability,
+                "rotation_bump": getattr(forecast, "rotation_bump", 0.0),
+                "base_minutes": getattr(forecast, "base_minutes", 0.0),
+                "pre_bump_minutes": getattr(forecast, "pre_bump_minutes", 0.0),
+                "injury_event_ids": list(
+                    getattr(forecast, "injury_event_ids", ()) or ()
+                ),
+                "starter_prob": getattr(forecast, "starter_prob", 0.0),
             }
         )
         ledger.append(
@@ -307,6 +319,13 @@ def build_prop_rows(
                 "percentile_90": forecast.percentile_90,
                 "void_probability": forecast.void_probability,
                 "flags": list(forecast.flags),
+                "rotation_bump": getattr(forecast, "rotation_bump", 0.0),
+                "base_minutes": getattr(forecast, "base_minutes", 0.0),
+                "pre_bump_minutes": getattr(forecast, "pre_bump_minutes", 0.0),
+                "injury_event_ids": list(
+                    getattr(forecast, "injury_event_ids", ()) or ()
+                ),
+                "starter_prob": getattr(forecast, "starter_prob", 0.0),
             }
         )
     return rows, ledger
@@ -450,12 +469,28 @@ def build_daily_board(
         total_by_team[forecast.away_team] = forecast.total_projection
     league_game_total = _league_game_total_baseline(team_results)
 
-    rotation_bumps = _rotation_minute_bumps(
+    rotation_detail = rotation_minute_detail(
         prop_lines=prop_lines,
         logs_by_player=logs_by_player,
         player_statuses=player_statuses,
         player_positions=player_positions,
     )
+    rotation_bumps = {
+        norm: bump
+        for norm, bump in rotation_detail["bumps"].items()
+        if norm in {line.player_name_norm for line in prop_lines}
+    }
+    injury_events = build_injury_events_for_board(
+        screen_date=screen_date,
+        rotation_detail=rotation_detail,
+        game_forecasts=game_forecasts,
+    )
+    events_by_recipient: dict[str, list[str]] = {}
+    for event in injury_events:
+        for recipient in event.get("recipients", ()):
+            events_by_recipient.setdefault(recipient, []).append(
+                event["event_id"]
+            )
 
     for line in prop_lines:
         artifact = residual_artifacts.get(line.prop_type.upper())
@@ -493,9 +528,19 @@ def build_daily_board(
             ev_selection=ev_selection,
         )
         if forecast is not None:
+            norm = line.player_name_norm
+            base_value = rotation_detail["base_minutes"].get(
+                norm, getattr(forecast, "pre_bump_minutes", 0.0)
+            )
+            forecast = _replace(
+                forecast,
+                base_minutes=round(base_value, 4),
+                pre_bump_minutes=round(base_value, 4),
+                injury_event_ids=tuple(events_by_recipient.get(norm, ())),
+            )
             prop_forecasts.append(forecast)
 
-    return assemble_board(
+    board = assemble_board(
         screen_date=screen_date,
         run_id=run_id,
         slot=slot,
@@ -505,6 +550,12 @@ def build_daily_board(
         prop_forecasts=prop_forecasts,
         provenance=provenance,
     )
+    board.injury_trace = {
+        "screen_date": screen_date,
+        "events": injury_events,
+        "event_count": len(injury_events),
+    }
+    return board
 
 
 def write_board(path: Path, board: ForecastBoard) -> None:
@@ -707,10 +758,120 @@ def _rotation_minute_bumps(
             )
     if not out_entries:
         return {}
-    bumps = redistribute_out_minutes(out_entries, roster_minutes, meta)
+    bumps, _attribution = redistribute_out_minutes_explained(
+        out_entries, roster_minutes, meta
+    )
     # Only healthy players with a priced line can absorb minutes.
     line_norms = {line.player_name_norm for line in prop_lines}
     return {norm: bump for norm, bump in bumps.items() if norm in line_norms}
+
+
+def rotation_minute_detail(
+    *,
+    prop_lines,
+    logs_by_player,
+    player_statuses,
+    player_positions,
+) -> dict:
+    """Explained rotation detail: bumps, attribution, base minutes, OUT entries.
+
+    Observability wrapper around :func:`redistribute_out_minutes_explained`
+    sharing the same roster/base-minute construction as
+    :func:`_rotation_minute_bumps`, so bumps stay identical to production.
+    """
+    roster_minutes: dict[str, float] = {}
+    meta: dict[str, dict[str, object]] = {}
+    for norm, logs in logs_by_player.items():
+        base = _base_minutes_for_player(logs)
+        if base <= 0.0:
+            continue
+        roster_minutes[norm] = base
+        latest = max(logs, key=lambda log: log.game_date)
+        meta[norm] = {
+            "team": latest.team,
+            "position": player_positions.get(norm, ""),
+            "role": "starter" if base >= 24.0 else "bench",
+            "depth": 0 if base >= 24.0 else 1,
+        }
+    by_team: dict[str, list[str]] = {}
+    for norm in roster_minutes:
+        by_team.setdefault(str(meta[norm]["team"]), []).append(norm)
+    for team_norms in by_team.values():
+        team_norms.sort(key=lambda norm: roster_minutes[norm], reverse=True)
+        for depth, norm in enumerate(team_norms):
+            meta[norm]["depth"] = depth
+    out_entries: list[dict[str, object]] = []
+    for norm, status in player_statuses.items():
+        if norm not in roster_minutes:
+            continue
+        if status and is_redistributable_out(status):
+            out_entries.append(
+                {
+                    "player_name_norm": norm,
+                    "team": meta[norm]["team"],
+                    "status": status,
+                    "base_minutes": roster_minutes[norm],
+                    "position": meta[norm]["position"],
+                }
+            )
+    if not out_entries:
+        return {
+            "bumps": {},
+            "attribution": {},
+            "base_minutes": roster_minutes,
+            "out_entries": [],
+        }
+    bumps, attribution = redistribute_out_minutes_explained(
+        out_entries, roster_minutes, meta
+    )
+    return {
+        "bumps": bumps,
+        "attribution": attribution,
+        "base_minutes": roster_minutes,
+        "out_entries": out_entries,
+    }
+
+
+def build_injury_events_for_board(
+    *,
+    screen_date: str,
+    rotation_detail: Mapping[str, Any],
+    game_forecasts: Sequence[GameForecast] = (),
+) -> list[dict[str, Any]]:
+    """Build traceable injury events for a board (observability only).
+
+    Team debit context comes from the game forecasts' post-debit totals;
+    pre-debit totals are recovered as post + home/away debit.
+    """
+    from .injury_trace import build_injury_events
+
+    debit: dict[str, float] = {}
+    pre_debit: dict[str, float] = {}
+    post_debit: dict[str, float] = {}
+    for forecast in game_forecasts or ():
+        home_debit = float(getattr(forecast, "injury_debit_pts_home", 0.0) or 0.0)
+        away_debit = float(getattr(forecast, "injury_debit_pts_away", 0.0) or 0.0)
+        total = float(getattr(forecast, "total_projection", 0.0) or 0.0)
+        debit[forecast.home_team] = home_debit
+        debit[forecast.away_team] = away_debit
+        post_debit[forecast.home_team] = total / 2.0
+        post_debit[forecast.away_team] = total / 2.0
+        pre_debit[forecast.home_team] = total / 2.0 + home_debit
+        pre_debit[forecast.away_team] = total / 2.0 + away_debit
+    return build_injury_events(
+        screen_date=screen_date,
+        out_entries=rotation_detail.get("out_entries", ()),
+        attribution=rotation_detail.get("attribution", {}),
+        vacated_minutes={
+            str(entry.get("player_name_norm", "")): float(
+                entry.get("base_minutes", 0.0) or 0.0
+            )
+            for entry in rotation_detail.get("out_entries", ())
+        },
+        team_debit_pts=debit,
+        team_total_pre_debit=pre_debit,
+        team_total_post_debit=post_debit,
+    )
 
 
 def _base_minutes_for_player(logs: Sequence[PlayerGameLog]) -> float:

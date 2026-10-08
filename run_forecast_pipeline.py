@@ -573,6 +573,17 @@ def _run_pipeline_once(
         print("[pipeline] coverage-report: no board or ledger written")
         return 0, health["status"] == "ok"
 
+    try:
+        from wnba_props.injury_trace import append_injury_events
+
+        trace_events = (board.injury_trace or {}).get("events", ())
+        appended = append_injury_events(
+            LEDGER_DIR / "injury_events.jsonl", trace_events
+        )
+        print(f"[pipeline] injury-trace events={len(trace_events)} appended={appended}")
+    except Exception as exc:  # noqa: BLE001 - trace log never blocks the board
+        print(f"[pipeline] injury-trace skipped: {exc}", file=sys.stderr)
+
     board_path = _board_path(screen, slot, snapshot_id)
     write_board(board_path, board)
     write_ledger(LEDGER_DIR / "forecast_ledger.jsonl", board)

@@ -274,6 +274,33 @@ class LedgerTests(unittest.TestCase):
             self.assertEqual(rows[0]["outcome"], WIN)
 
 
+class InjuryTraceCarryThroughTests(unittest.TestCase):
+    def test_prop_rows_carry_trace_fields_with_defaults(self) -> None:
+        from wnba_props.board import build_prop_rows
+
+        forecast = _prop_forecast()
+        self.assertEqual(getattr(forecast, "rotation_bump", 0.0), 0.0)
+        self.assertEqual(getattr(forecast, "starter_prob", 0.0), 0.0)
+        rows, ledger = build_prop_rows(
+            [forecast], run_id="run-trace", snapshot_id="snap", phase="regular"
+        )
+        for row in rows + ledger:
+            self.assertEqual(row["rotation_bump"], 0.0)
+            self.assertEqual(row["injury_event_ids"], [])
+            self.assertIn("starter_prob", row)
+            self.assertIn("base_minutes", row)
+            self.assertIn("pre_bump_minutes", row)
+
+    def test_injury_trace_defaults_to_empty(self) -> None:
+        board = assemble_board(
+            screen_date="2026-06-01",
+            run_id="run-trace",
+            prop_forecasts=[_prop_forecast()],
+        )
+        self.assertEqual(board.injury_trace, {})
+        self.assertEqual(board.summary["prop_rows"], 1)
+
+
 class BoardTests(unittest.TestCase):
     def test_assemble_and_render(self) -> None:
         board = assemble_board(

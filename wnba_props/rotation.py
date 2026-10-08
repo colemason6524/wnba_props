@@ -51,28 +51,21 @@ def is_redistributable_out(status: object) -> bool:
     return normalize_status(status) in QUALIFYING_OUT_STATUSES
 
 
-def redistribute_out_minutes(
+def redistribute_out_minutes_explained(
     out_players: Iterable[Mapping[str, object]],
     roster_minutes: Mapping[str, float],
     meta: Mapping[str, Mapping[str, object]],
-) -> dict:
-    """Compute per-player minute bumps from OUT players' vacated minutes.
+) -> tuple[dict, dict]:
+    """Compute per-player minute bumps plus per-OUT-player attribution.
 
-    Args:
-        out_players: one mapping per unavailable player with keys
-            ``player_name_norm``, ``team``, ``status``, ``base_minutes``
-            (projected minutes now vacated) and optional ``position``.
-            Entries whose status is not out / injured reserve / suspended
-            (e.g. day-to-day) are ignored.
-        roster_minutes: base projected minutes by player norm for the
-            full roster (healthy teammates and OUT players alike).
-        meta: per-player info by norm with keys ``team``, ``position``,
-            ``role`` (``"starter"``/``"bench"``) and ``depth`` (lower
-            number = higher in the rotation).
-
-    Returns:
-        Mapping of player norm to bump minutes (>= 0). Empty when there is
-        nothing to redistribute or no eligible teammate exists.
+    Inputs, candidate pool, deterministic ranking, weights and both clamps
+    are identical to :func:`redistribute_out_minutes`. Returns
+    ``(bumps, attribution)`` where ``attribution[out_norm][recipient_norm]``
+    is the bump minutes credited from that OUT player. Attribution credits
+    are scaled through the same per-player and total clamps as ``bumps``,
+    so each recipient column sums back to the reported per-player bump
+    (up to floating-point rounding). Observability only: no model logic
+    differences.
     """
     excluded: set = set()
     vacated: list = []
@@ -100,9 +93,10 @@ def redistribute_out_minutes(
         )
 
     if not vacated:
-        return {}
+        return {}, {}
 
     bumps: dict = {}
+    attribution: dict = {}
     total_vacated = 0.0
     for out in vacated:
         team = out["team"]
@@ -146,19 +140,30 @@ def redistribute_out_minutes(
             )
         )
         total_vacated += out["minutes"]
+        credit_for_out: dict = attribution.setdefault(out["norm"], {})
         for item in pool:
             weight = item["base"] / pool_base
-            bumps[item["norm"]] = bumps.get(item["norm"], 0.0) + (
-                REDIST_FACTOR * out["minutes"] * weight
+            credit = REDIST_FACTOR * out["minutes"] * weight
+            bumps[item["norm"]] = bumps.get(item["norm"], 0.0) + credit
+            credit_for_out[item["norm"]] = (
+                credit_for_out.get(item["norm"], 0.0) + credit
             )
 
     if not bumps:
-        return {}
+        return {}, {}
 
     # Clamp: no player gains more than 50% of their own base minutes.
+    # Each recipient's attribution credits are scaled with the bump so the
+    # per-OUT columns keep summing back to the reported per-player bump.
     for norm in list(bumps):
         cap = MAX_BUMP_RATIO * float(roster_minutes.get(norm, 0.0))
-        bumps[norm] = max(0.0, min(bumps[norm], cap))
+        capped = max(0.0, min(bumps[norm], cap))
+        if bumps[norm] > 0.0 and capped != bumps[norm]:
+            scale = capped / bumps[norm]
+            for contrib in attribution.values():
+                if norm in contrib:
+                    contrib[norm] *= scale
+        bumps[norm] = capped
 
     # Clamp: total bumps never exceed total vacated minutes.
     total_bump = sum(bumps.values())
@@ -166,5 +171,47 @@ def redistribute_out_minutes(
         scale = total_vacated / total_bump
         for norm in bumps:
             bumps[norm] *= scale
+        for contrib in attribution.values():
+            for norm in contrib:
+                contrib[norm] *= scale
 
-    return {norm: bump for norm, bump in bumps.items() if bump > 0.0}
+    bumps = {norm: bump for norm, bump in bumps.items() if bump > 0.0}
+    attribution = {
+        out_norm: {
+            norm: amount for norm, amount in contrib.items() if norm in bumps
+        }
+        for out_norm, contrib in attribution.items()
+    }
+    attribution = {
+        out_norm: contrib for out_norm, contrib in attribution.items() if contrib
+    }
+    return bumps, attribution
+
+
+def redistribute_out_minutes(
+    out_players: Iterable[Mapping[str, object]],
+    roster_minutes: Mapping[str, float],
+    meta: Mapping[str, Mapping[str, object]],
+) -> dict:
+    """Compute per-player minute bumps from OUT players' vacated minutes.
+
+    Args:
+        out_players: one mapping per unavailable player with keys
+            ``player_name_norm``, ``team``, ``status``, ``base_minutes``
+            (projected minutes now vacated) and optional ``position``.
+            Entries whose status is not out / injured reserve / suspended
+            (e.g. day-to-day) are ignored.
+        roster_minutes: base projected minutes by player norm for the
+            full roster (healthy teammates and OUT players alike).
+        meta: per-player info by norm with keys ``team``, ``position``,
+            ``role`` (``"starter"``/``"bench"``) and ``depth`` (lower
+            number = higher in the rotation).
+
+    Returns:
+        Mapping of player norm to bump minutes (>= 0). Empty when there is
+        nothing to redistribute or no eligible teammate exists.
+    """
+    bumps, _attribution = redistribute_out_minutes_explained(
+        out_players, roster_minutes, meta
+    )
+    return bumps

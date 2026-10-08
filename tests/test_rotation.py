@@ -16,6 +16,7 @@ from wnba_props.rotation import (
     REDIST_FACTOR,
     is_redistributable_out,
     redistribute_out_minutes,
+    redistribute_out_minutes_explained,
 )
 
 
@@ -258,3 +259,53 @@ class MultiOutTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ExplainedParityTests(unittest.TestCase):
+    def test_explained_wrapper_identical_and_attribution_sums_back(self) -> None:
+        roster = {"a": 30.0, "b": 20.0, "c": 12.0, "d": 8.0}
+        meta = {
+            n: {"team": "PHX", "position": "F", "role": "bench", "depth": i}
+            for i, n in enumerate(roster)
+        }
+        outs = [
+            {"player_name_norm": "a", "team": "PHX", "status": "Out",
+             "base_minutes": 30.0, "position": "F"},
+            {"player_name_norm": "b", "team": "PHX", "status": "IR",
+             "base_minutes": 20.0, "position": "F"},
+        ]
+        bumps, attribution = redistribute_out_minutes_explained(outs, roster, meta)
+        self.assertEqual(bumps, redistribute_out_minutes(outs, roster, meta))
+        for recipient, bump in bumps.items():
+            credited = sum(
+                contrib.get(recipient, 0.0) for contrib in attribution.values()
+            )
+            self.assertAlmostEqual(credited, bump, places=9)
+
+    def test_gray_out_explained_matches_wrapper(self) -> None:
+        logs, lines, positions = _slate()
+        roster_minutes: dict = {}
+        meta: dict = {}
+        logs_by_player: dict = {}
+        for log in logs:
+            logs_by_player.setdefault(log.player_name_norm, []).append(log)
+        for norm, entries in logs_by_player.items():
+            eligible = [log for log in entries if log.did_play and log.minutes > 0.0]
+            base = sum(log.minutes for log in eligible) / len(eligible)
+            roster_minutes[norm] = base
+            latest = max(entries, key=lambda log: log.game_date)
+            meta[norm] = {
+                "team": latest.team,
+                "position": positions.get(norm, ""),
+                "role": "starter" if base >= 24.0 else "bench",
+                "depth": 0,
+            }
+        outs = [
+            {"player_name_norm": "chelsea gray", "team": "PHX", "status": "Out",
+             "base_minutes": roster_minutes["chelsea gray"], "position": "G"}
+        ]
+        bumps, attribution = redistribute_out_minutes_explained(
+            outs, roster_minutes, meta
+        )
+        self.assertEqual(bumps, redistribute_out_minutes(outs, roster_minutes, meta))
+        self.assertIn("chelsea gray", attribution)
