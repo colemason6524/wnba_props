@@ -241,6 +241,7 @@ def build_team_features(
             replacement_ppg=replacement_ppg,
         )
     if lost > 0.0:
+        print("[team-injury] team=%s debit=%.1fpts OUT starter(s) above replacement" % (team, lost))
         return dataclasses.replace(
             base,
             ppg_last_5=base.ppg_last_5 - lost,

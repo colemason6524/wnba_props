@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 import math
 from dataclasses import asdict, dataclass, field
@@ -97,6 +98,12 @@ class GameForecast:
     over_price: Optional[int] = None
     under_price: Optional[int] = None
     market_blend_weight: float = 0.0
+    injury_debit_pts_home: float = 0.0
+    injury_debit_pts_away: float = 0.0
+    total_pre_debit: Optional[float] = None
+    total_post_debit: Optional[float] = None
+    margin_pre_debit: Optional[float] = None
+    margin_post_debit: Optional[float] = None
 
 
 def save_game_engine(path: Path, engine: GameEngine) -> None:
@@ -265,6 +272,28 @@ def forecast_game(
             total_price = market.under_price
             total_ev = expected_value_with_push(under, over, total_price)
 
+    home_debit = home.star_out_points if home.star_out_points > 0.0 else 0.0
+    away_debit = away.star_out_points if away.star_out_points > 0.0 else 0.0
+    total_pre_debit = total_projection
+    margin_pre_debit = margin_projection
+    if home_debit > 0.0 or away_debit > 0.0:
+        home_clean = dataclasses.replace(
+            home,
+            ppg_last_5=home.ppg_last_5 + home_debit,
+            ppg_last_10=home.ppg_last_10 + home_debit,
+            ppg_season=home.ppg_season + home_debit,
+            margin_last_5=home.margin_last_5 + home_debit,
+        )
+        away_clean = dataclasses.replace(
+            away,
+            ppg_last_5=away.ppg_last_5 + away_debit,
+            ppg_last_10=away.ppg_last_10 + away_debit,
+            ppg_season=away.ppg_season + away_debit,
+            margin_last_5=away.margin_last_5 + away_debit,
+        )
+        total_pre_debit = engine.total.predict(total_vector(home_clean, away_clean))
+        margin_pre_debit = engine.margin.predict(margin_vector(home_clean, away_clean))
+
     return GameForecast(
         home_team=home.team,
         away_team=away.team,
@@ -307,6 +336,12 @@ def forecast_game(
         over_price=market.over_price,
         under_price=market.under_price,
         market_blend_weight=market_weight,
+        injury_debit_pts_home=home_debit,
+        injury_debit_pts_away=away_debit,
+        total_pre_debit=total_pre_debit,
+        total_post_debit=total_projection,
+        margin_pre_debit=margin_pre_debit,
+        margin_post_debit=margin_projection,
     )
 
 
