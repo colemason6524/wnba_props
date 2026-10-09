@@ -47,6 +47,21 @@ case "$TASK" in
             REQUIRED_SECRET=
         fi
         ;;
+    refresh)
+        # Late pregame injury refresh: same forecast path as the forecast
+        # arm, plus a live ESPN injury pull (cache bypassed). The runner
+        # never sleeps; the systemd late timer provides the schedule.
+        LOG_FILE="$LOG_DIR/wnba_forecast_refresh.log"
+        TIMEOUT=90m
+        FORECAST_SLOT=${WNBA_FORECAST_SLOT:-late}
+        COMMAND=("$PYTHON_EXE" run_forecast_pipeline.py --slot "$FORECAST_SLOT" --refresh-injuries)
+        if [[ "${WNBA_SEND_DISCORD:-true}" != "false" ]]; then
+            COMMAND+=(--send-discord)
+            REQUIRED_SECRET=WNBA_PROPS_DISCORD_WEBHOOK_URL
+        else
+            REQUIRED_SECRET=
+        fi
+        ;;
     forecast-grade)
         LOG_FILE="$LOG_DIR/wnba_forecast_grade.log"
         TIMEOUT=30m

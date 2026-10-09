@@ -1,0 +1,11 @@
+[Unit]
+Description=WNBA late-pregame forecast refresh (live ESPN injuries, late slot)
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=%h/wnba_props/scripts/run_linux_task.sh
+
+[Service]
+Type=oneshot
+Environment=WNBA_FORECAST_SLOT=late
+ExecStart=%h/wnba_props/scripts/run_linux_task.sh refresh
+TimeoutStartSec=infinity

@@ -3,9 +3,10 @@ from __future__ import annotations
 import unittest
 from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import run_forecast_pipeline as pipeline
+from wnba_props.rotation import is_redistributable_out, redistribute_out_minutes
 
 
 def _game(tip: datetime) -> SimpleNamespace:
@@ -130,6 +131,177 @@ class PregameOrchestrationTests(unittest.TestCase):
                 0,
             )
         self.assertEqual(once.call_count, 1)
+
+
+class RefreshInjuryTests(unittest.TestCase):
+    """Late-pregame refresh bypasses the injury cache for a live ESPN pull.
+
+    Mocks at the ``pipeline.EspnInjurySource`` seam; player-log sources are
+    stubbed empty so each test isolates the injury path.
+    """
+
+    def _settings(self) -> SimpleNamespace:
+        return SimpleNamespace(
+            screen_date=date(2026, 9, 27),
+            sticky_daily_log_cache=False,
+            season_phase="regular",
+        )
+
+    def _games(self) -> list:
+        return [SimpleNamespace(home_team="NY", away_team="PHX")]
+
+    def _lines(self) -> list:
+        return [
+            SimpleNamespace(
+                player_name_norm="jane doe",
+                player_name_raw="Jane Doe",
+                team="NY",
+            )
+        ]
+
+    def _collect(self, injury_mock, **overrides):
+        kwargs = dict(refresh_injuries=False)
+        kwargs.update(overrides)
+        with (
+            patch.object(
+                pipeline.BasketballReferenceSource,
+                "fetch_logs",
+                return_value=[],
+            ),
+            patch.object(
+                pipeline.EspnGameLogSource, "fetch_logs", return_value=[]
+            ),
+            patch.object(
+                pipeline.EspnBoundedBoxscoreLogsSource,
+                "fetch_logs",
+                return_value=[],
+            ),
+            patch.object(
+                pipeline.EspnInjurySource,
+                "fetch_team_injuries",
+                injury_mock,
+            ),
+        ):
+            return pipeline._collect_player_logs(
+                self._settings(),
+                self._games(),
+                self._lines(),
+                MagicMock(),
+                MagicMock(),
+                **kwargs,
+            )
+
+    def test_refresh_bypasses_cache_via_force_refresh(self) -> None:
+        injury = SimpleNamespace(
+            player_name_norm="jane doe", status="Questionable"
+        )
+        injury_mock = MagicMock(return_value=[injury])
+        _logs, statuses, _team_injuries, _freshness = self._collect(
+            injury_mock, refresh_injuries=True
+        )
+        # One live pull per team on the late slot ...
+        self.assertEqual(injury_mock.call_count, 2)
+        teams = {call.args[0] for call in injury_mock.call_args_list}
+        self.assertEqual(teams, {"NY", "PHX"})
+        # ... each bypassing JsonCache via force_refresh.
+        for call in injury_mock.call_args_list:
+            self.assertTrue(call.kwargs.get("force_refresh"))
+        # Live statuses still flow into the board path.
+        self.assertEqual(statuses.get("jane doe"), "Questionable")
+
+    def test_normal_path_does_not_force_refresh(self) -> None:
+        injury_mock = MagicMock(return_value=[])
+        self._collect(injury_mock, refresh_injuries=False)
+        self.assertEqual(injury_mock.call_count, 2)
+        for call in injury_mock.call_args_list:
+            self.assertNotIn("force_refresh", call.kwargs)
+
+    def test_failed_live_pull_propagates_instead_of_publishing_from_cache(
+        self,
+    ) -> None:
+        injury_mock = MagicMock(side_effect=RuntimeError("espn down"))
+        with self.assertRaises(RuntimeError):
+            self._collect(injury_mock, refresh_injuries=True)
+
+    def test_failed_cached_pull_never_blocks_the_board(self) -> None:
+        injury_mock = MagicMock(side_effect=RuntimeError("espn down"))
+        _logs, statuses, team_injuries, _freshness = self._collect(
+            injury_mock, refresh_injuries=False
+        )
+        self.assertEqual(statuses, {})
+        self.assertEqual(team_injuries, {})
+
+
+class RotationStatusRuleTests(unittest.TestCase):
+    """Questionable-style statuses stay IN; only OUT/IR/suspended vacate.
+
+    Mirrors ``wnba_props/rotation.py``: ``is_redistributable_out`` is the
+    rule the board path uses to decide whose minutes get redistributed.
+    """
+
+    def test_uncertain_statuses_stay_in(self) -> None:
+        for status in (
+            "questionable",
+            "day-to-day",
+            "doubtful",
+            "probable",
+            "game-time decision",
+        ):
+            with self.subTest(status=status):
+                self.assertFalse(is_redistributable_out(status))
+
+    def test_out_and_ir_vacate(self) -> None:
+        for status in (
+            "out",
+            "Out For Season",
+            "out indefinitely",
+            "injured reserve",
+            "IR",
+            "suspended",
+        ):
+            with self.subTest(status=status):
+                self.assertTrue(is_redistributable_out(status))
+
+    def _rotation_inputs(self, status: str):
+        return (
+            [
+                {
+                    "player_name_norm": "jane doe",
+                    "team": "NY",
+                    "status": status,
+                    "base_minutes": 30.0,
+                }
+            ],
+            {"jane doe": 30.0, "teammate a": 20.0},
+            {
+                "jane doe": {
+                    "team": "NY",
+                    "position": "G",
+                    "role": "starter",
+                    "depth": 1,
+                },
+                "teammate a": {
+                    "team": "NY",
+                    "position": "G",
+                    "role": "bench",
+                    "depth": 5,
+                },
+            },
+        )
+
+    def test_questionable_generates_no_rotation_bump(self) -> None:
+        out_players, roster_minutes, meta = self._rotation_inputs(
+            "questionable"
+        )
+        self.assertEqual(
+            redistribute_out_minutes(out_players, roster_minutes, meta), {}
+        )
+
+    def test_out_vacates_minutes_to_teammates(self) -> None:
+        out_players, roster_minutes, meta = self._rotation_inputs("out")
+        bumps = redistribute_out_minutes(out_players, roster_minutes, meta)
+        self.assertGreater(bumps.get("teammate a", 0.0), 0.0)
+        self.assertNotIn("jane doe", bumps)
 
 
 if __name__ == "__main__":

@@ -234,7 +234,9 @@ def _load_team_results(screen_date: date) -> list:
     return results
 
 
-def _collect_player_logs(settings, games, prop_lines, shared_cache, injuries_cache):
+def _collect_player_logs(
+    settings, games, prop_lines, shared_cache, injuries_cache, refresh_injuries: bool = False
+):
     """Load point-in-time player logs for every prop subject.
 
     Uses Basketball-Reference as primary with an ESPN gamelog fallback. No
@@ -252,10 +254,18 @@ def _collect_player_logs(settings, games, prop_lines, shared_cache, injuries_cac
     injury_source = EspnInjurySource(injuries_cache)
     team_injuries = {}
     for team in sorted({g.home_team for g in games} | {g.away_team for g in games}):
-        try:
-            injuries = injury_source.fetch_team_injuries(team, settings.screen_date)
-        except Exception:  # noqa: BLE001 - injuries never block the board
-            injuries = []
+        if refresh_injuries:
+            # Late refresh: bypass the cache for a live ESPN pull. A fetch
+            # failure propagates so the pipeline fails instead of running
+            # the board path on a stale injury snapshot.
+            injuries = injury_source.fetch_team_injuries(
+                team, settings.screen_date, force_refresh=True
+            )
+        else:
+            try:
+                injuries = injury_source.fetch_team_injuries(team, settings.screen_date)
+            except Exception:  # noqa: BLE001 - injuries never block the board
+                injuries = []
         if injuries:
             team_injuries[team] = injuries
 
@@ -387,6 +397,7 @@ def _run_pipeline_once(
     refresh: bool = True,
     simulations: int = 10_000,
     coverage_report: bool = False,
+    refresh_injuries: bool = False,
 ) -> tuple[int, bool]:
     """Run one board capture; returns (exit_code, healthy).
 
@@ -458,8 +469,15 @@ def _run_pipeline_once(
         return 1, False
 
     print("[pipeline] stage=player_logs")
+    if refresh_injuries:
+        print("[pipeline] stage=injuries-refresh (live ESPN pull, cache bypassed)")
     logs_by_player, player_statuses, team_injuries, log_freshness = _collect_player_logs(
-        settings, games, prop_lines, shared_cache, injuries_cache
+        settings,
+        games,
+        prop_lines,
+        shared_cache,
+        injuries_cache,
+        refresh_injuries=refresh_injuries,
     )
     fallback_stats = log_freshness["boxscore_fallback"]
     print(
@@ -645,6 +663,7 @@ def run_pipeline(
     pregame_max_retries: int = 3,
     pregame_wait: bool = True,
     coverage_report: bool = False,
+    refresh_injuries: bool = False,
 ) -> int:
     """Run the forecast pipeline, with schedule-aware pregame behavior.
 
@@ -669,6 +688,7 @@ def run_pipeline(
             refresh=refresh,
             simulations=simulations,
             coverage_report=coverage_report,
+            refresh_injuries=refresh_injuries,
         )
         return code
 
@@ -699,6 +719,7 @@ def run_pipeline(
             refresh=refresh,
             simulations=simulations,
             coverage_report=coverage_report,
+            refresh_injuries=refresh_injuries,
         )
         if last_code == 0 and healthy:
             return 0
@@ -788,13 +809,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--slot",
         default="evening",
-        choices=("morning", "afternoon", "pregame", "evening"),
+        choices=("morning", "afternoon", "pregame", "evening", "late"),
     )
     parser.add_argument("--date", default=None, help="Screen date YYYY-MM-DD; defaults to today.")
     parser.add_argument("--send-discord", action="store_true")
     parser.add_argument("--force-send", action="store_true")
     parser.add_argument("--webhook-url", default=None)
     parser.add_argument("--no-refresh", action="store_true")
+    parser.add_argument(
+        "--refresh-injuries",
+        action="store_true",
+        help=(
+            "Bypass the injury JsonCache for a live ESPN pull, then run the "
+            "existing board path in the same invocation. A failed pull "
+            "fails the run instead of publishing from cached injuries."
+        ),
+    )
     parser.add_argument("--simulations", type=int, default=10_000)
     parser.add_argument(
         "--pregame-lead-minutes",
@@ -841,6 +871,7 @@ def main(argv: list[str] | None = None) -> int:
         force_send=args.force_send,
         webhook_url=args.webhook_url,
         refresh=not args.no_refresh,
+        refresh_injuries=args.refresh_injuries,
         simulations=args.simulations,
         pregame_lead_minutes=args.pregame_lead_minutes,
         pregame_retry_minutes=args.pregame_retry_minutes,
