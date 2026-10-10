@@ -1,19 +1,19 @@
 {
   "schema_version": 1,
   "project_id": "wnba_props",
-  "updated_at": "2026-10-08T14:34:50+00:00",
+  "updated_at": "2026-10-10T00:03:07+00:00",
   "status": "observing",
-  "summary": "14:00Z pregame run found no games for 2026-10-08 (ESPN slate empty; confirmed independently). No-slate path exited 0; no boards produced, so the injury-debit live-fire check is moot for the pregame slot. First real live test is the 22:45Z evening run ahead of the Oct 9 semifinals.",
+  "summary": "Diagnosed the 22:20 UTC pregame exit-2: run_linux_task.sh was rewritten under the running service by the late-refresh fleet deploy, so exit-2 came after the pipeline had produced the pregame board and sent 4 Discord messages. Verified script syntax OK, cleared the failed unit state, and confirmed the 17:00 EDT late refresh and 18:45 EDT evening runs both exited 0 with boards and Discord delivered. No code change needed; one-off deploy-during-run.",
   "experiment": null,
-  "watching_for": "evening run 2026-10-08 22:45Z board carrying injury_debit_pts fields",
-  "next_action": "evening 19:56 check-in verifies debit fields on evening board",
-  "deployed": true,
-  "git_commit": "6e649a4",
+  "watching_for": null,
+  "next_action": "Verify Sat 2026-10-10 14:00 UTC pregame run exits 0",
+  "deployed": false,
+  "git_commit": "",
   "check_back": {
     "kind": "grade_event",
-    "label": "injury-debit live-check 2026-10-08 midday",
+    "label": "pregame exit-2 diagnosis",
     "target": null,
-    "baseline": "2026-10-08T14:34:50+00:00",
+    "baseline": "2026-10-10T00:03:07+00:00",
     "events": [],
     "target_date": null
   },
@@ -29,6 +29,13 @@
     {
       "label": "Research roadmap",
       "path": "docs/research_model_roadmap.md"
+    }
+  ],
+  "run_recoveries": [
+    {
+      "service": "sports-wnba-forecast@pregame.service",
+      "fix_deployed_at": "2026-10-10T00:06:00+00:00",
+      "summary": "One-off exit-2 from fleet rewriting run_linux_task.sh mid-run; pipeline completed; syntax verified OK, failed state cleared"
     }
   ]
 }
