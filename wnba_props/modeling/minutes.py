@@ -55,6 +55,16 @@ _BASE_DNP_PROBABILITY = 0.03
 _BENCH_DNP_PREMIUM = 0.12
 _MAX_DNP_PROBABILITY = 0.95
 
+# Blowout-aware minutes (Fix 3): starters sit in blowouts.
+# Calibrated from 2026-09/10 ledger: starters over-projected by +6.4 min
+# in 25+ point actual-margin games. The team model's margin projections
+# are conservative (max ~14), so the threshold is set on expected margin:
+# ~14.5% of games have |expected|>=10, matching the ~12.5% actual blowout rate.
+_BLOWOUT_MARGIN_THRESHOLD = 10.0
+_BLOWOUT_REDUCTION_RATE = 2.0
+_BLOWOUT_MAX_REDUCTION = 8.0
+_BLOWOUT_STARTER_MINUTES = 25.0
+
 
 def dnp_probability(
     features: PlayerFeatures,
@@ -81,12 +91,37 @@ def dnp_probability(
     return _clamp(probability, 0.0, _MAX_DNP_PROBABILITY)
 
 
+def _blowout_minutes_reduction(
+    *,
+    projected_minutes: float,
+    is_starter: bool,
+    expected_margin: float | None,
+) -> float:
+    """Minutes reduction for starters in expected blowouts.
+
+    Starters sit in the 4th quarter of blowouts (either direction).
+    Only applies to high-minute players (starters); bench players
+    gain minutes in blowouts but that's a second-order effect.
+    """
+    if expected_margin is None:
+        return 0.0
+    blowout_magnitude = abs(expected_margin)
+    if blowout_magnitude <= _BLOWOUT_MARGIN_THRESHOLD:
+        return 0.0
+    is_starter_like = is_starter or projected_minutes >= _BLOWOUT_STARTER_MINUTES
+    if not is_starter_like:
+        return 0.0
+    reduction = (blowout_magnitude - _BLOWOUT_MARGIN_THRESHOLD) * _BLOWOUT_REDUCTION_RATE
+    return _clamp(reduction, 0.0, _BLOWOUT_MAX_REDUCTION)
+
+
 def project_minutes(
     features: PlayerFeatures,
     *,
     player_status: str = "",
     recent_weight: float = 0.65,
     rotation_bump: float = 0.0,
+    expected_margin: float | None = None,
 ) -> MinutesProjection:
     status = player_status.strip().lower()
     excluded = status in _EXCLUDED_STATUSES
@@ -113,6 +148,13 @@ def project_minutes(
 
     if rotation_bump:
         projected = projected + max(0.0, rotation_bump)
+
+    blowout_reduction = _blowout_minutes_reduction(
+        projected_minutes=projected,
+        is_starter=features.starting,
+        expected_margin=expected_margin,
+    )
+    projected = projected - blowout_reduction
 
     return MinutesProjection(
         projected_minutes=_clamp(projected, 0.0, 40.0),

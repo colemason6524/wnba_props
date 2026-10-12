@@ -246,9 +246,18 @@ class BoardTraceTests(unittest.TestCase):
         self.assertAlmostEqual(
             row["pre_bump_minutes"], row["base_minutes"], places=5
         )
+        # Fix 3: projected_minutes includes blowout reduction when expected
+        # margin is large. The mock engine produces a 12-pt margin, triggering
+        # a (12-10)*2.0 = 4.0 min reduction for starters.
+        from wnba_props.modeling.minutes import _blowout_minutes_reduction
+        blowout_red = _blowout_minutes_reduction(
+            projected_minutes=row["pre_bump_minutes"] + row["rotation_bump"],
+            is_starter=True,  # Bonner is starter-like in test slate
+            expected_margin=12.0,  # mock engine margin
+        )
         self.assertAlmostEqual(
             row["projected_minutes"],
-            row["pre_bump_minutes"] + row["rotation_bump"],
+            row["pre_bump_minutes"] + row["rotation_bump"] - blowout_red,
             places=2,
         )
         self.assertEqual(row["injury_event_ids"], ["2026-06-01:PHX:chelsea gray:out"])

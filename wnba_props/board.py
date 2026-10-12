@@ -492,6 +492,12 @@ def build_daily_board(
                 event["event_id"]
             )
 
+    # Fix 3: map each game to its margin projection for blowout-aware minutes.
+    # margin_projection is from the home team's perspective (positive = home wins).
+    margin_by_matchup: dict[tuple[str, str], float] = {}
+    for gf in game_forecasts:
+        margin_by_matchup[(gf.home_team, gf.away_team)] = gf.margin_projection
+
     for line in prop_lines:
         artifact = residual_artifacts.get(line.prop_type.upper())
         if artifact is None:
@@ -509,10 +515,22 @@ def build_daily_board(
         )
         if features is None:
             continue
+        # Fix 3: expected margin from the player's team's perspective.
+        expected_margin = None
+        game_margin = margin_by_matchup.get((line.opponent, line.team))
+        if game_margin is not None:
+            # line.team is away, line.opponent is home
+            expected_margin = -game_margin
+        else:
+            game_margin = margin_by_matchup.get((line.team, line.opponent))
+            if game_margin is not None:
+                # line.team is home
+                expected_margin = game_margin
         forecast = forecast_prop(
             features=features,
             line=line,
             residuals=artifact,
+            expected_margin=expected_margin,
             player_status=player_statuses.get(line.player_name_norm, ""),
             rotation_bump=rotation_bumps.get(line.player_name_norm, 0.0),
             league_baseline=league_baselines.get(line.prop_type.upper()),
