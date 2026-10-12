@@ -532,3 +532,35 @@ class PositionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPlayoffRateAdjustment(unittest.TestCase):
+    """Playoff games are slower with tighter defense; rates should scale down."""
+
+    def test_no_playoff_adjustment_in_regular_season(self) -> None:
+        from wnba_props.modeling.rates import project_rate
+        # June game (regular season)
+        reg = project_rate(_features(game_date=date(2026, 6, 10), prop_type="PTS"))
+        self.assertEqual(reg.playoff_factor, 1.0)
+
+    def test_playoff_adjustment_applies_in_september(self) -> None:
+        from wnba_props.modeling.rates import project_rate
+        # September game (playoff)
+        po = project_rate(
+            _features(game_date=date(2026, 9, 27), prop_type="PTS"),
+            is_playoff=True,
+        )
+        self.assertAlmostEqual(po.playoff_factor, 0.963, places=3)
+        self.assertLess(po.projected_rate, project_rate(_features(prop_type="PTS")).projected_rate)
+
+    def test_playoff_multiplier_varies_by_prop_type(self) -> None:
+        from wnba_props.modeling.rates import PLAYOFF_RATE_MULTIPLIERS, project_rate
+        for prop_type, expected in PLAYOFF_RATE_MULTIPLIERS.items():
+            r = project_rate(_features(prop_type=prop_type), is_playoff=True)
+            self.assertAlmostEqual(r.playoff_factor, expected, places=3,
+                                   msg=f"prop_type={prop_type}")
+
+    def test_unknown_prop_type_defaults_to_no_adjustment(self) -> None:
+        from wnba_props.modeling.rates import project_rate
+        r = project_rate(_features(prop_type="UNKNOWN_STAT"), is_playoff=True)
+        self.assertEqual(r.playoff_factor, 1.0)

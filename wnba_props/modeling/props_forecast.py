@@ -74,19 +74,27 @@ def forecast_prop(
     simulations: int = 10_000,
     market_weight: float = 0.0,
     ev_selection: bool = False,
+    expected_margin: Optional[float] = None,
 ) -> Optional[PropForecast]:
     minutes = project_minutes(
-        features, player_status=player_status, rotation_bump=rotation_bump
+        features,
+        player_status=player_status,
+        rotation_bump=rotation_bump,
+        expected_margin=expected_margin,
     )
     if minutes.availability_excluded:
         return None
 
+    # Playoff adjustment: playoff games are slower with tighter defense.
+    # Scale down the projected rate to account for the structural shift.
+    is_playoff = features.game_date.month in (9, 10)
     rate = project_rate(
         features,
         league_baseline=league_baseline,
         positional_baseline=positional_baseline,
         game_total=game_total,
         game_total_baseline=game_total_baseline,
+        is_playoff=is_playoff,
     )
     simulation = simulate_prop(
         features=features,

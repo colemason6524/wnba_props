@@ -9,6 +9,16 @@ from ..features.player import PlayerFeatures
 LEAGUE_GAME_TOTAL_BASELINE = 164.0
 MAX_ENVIRONMENT_ADJUSTMENT = 0.05
 
+# Playoff rate multipliers: playoff games are slower with tighter defense.
+# Derived from 2026 playoff rate_error means (actual vs projected).
+# Applied to the projected per-minute rate in playoff games.
+PLAYOFF_RATE_MULTIPLIERS = {
+    "PTS": 0.963,
+    "3PM": 0.970,
+    "AST": 0.980,
+    "REB": 0.990,
+}
+
 
 @dataclass(frozen=True)
 class RateProjection:
@@ -17,6 +27,7 @@ class RateProjection:
     opponent_factor: float
     recent_weight: float
     environment_factor: float = 1.0
+    playoff_factor: float = 1.0
 
 
 def game_environment_factor(
@@ -45,6 +56,7 @@ def project_rate(
     positional_weight: float = 0.5,
     game_total: Optional[float] = None,
     game_total_baseline: float = LEAGUE_GAME_TOTAL_BASELINE,
+    is_playoff: bool = False,
 ) -> RateProjection:
     """Blend recency-weighted and season per-minute rates.
 
@@ -85,11 +97,17 @@ def project_rate(
         opponent_factor = max(0.80, min(1.20, opponent_factor))
 
     environment_factor = game_environment_factor(game_total, game_total_baseline)
-    projected_rate = base_rate * opponent_factor * environment_factor
+    playoff_factor = 1.0
+    if is_playoff:
+        playoff_factor = PLAYOFF_RATE_MULTIPLIERS.get(
+            features.prop_type.upper(), 1.0
+        )
+    projected_rate = base_rate * opponent_factor * environment_factor * playoff_factor
     return RateProjection(
         projected_rate=max(0.0, projected_rate),
         base_rate=base_rate,
         opponent_factor=opponent_factor,
         recent_weight=recent_weight,
         environment_factor=environment_factor,
+        playoff_factor=playoff_factor,
     )
