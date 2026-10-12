@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "project_id": "wnba_props",
-  "updated_at": "2026-10-12T21:23:47+00:00",
+  "updated_at": "2026-10-12T21:31:25+00:00",
   "status": "observing",
-  "summary": "Fix 2 (playoff residuals) NO-GO: playoff-specific (minutes_z, rate_error) pairs fit on 14 playoff games (200 obs/prop). Structural shift confirmed (minutes_z +0.335 vs +0.045, PTS rate -0.037). But ECE on playoff games: PTS regular 0.0046 vs playoff 0.0383 (worse); AST/3PM also worse. Fix 1 lambdas already handle playoff calibration. Artifacts removed, not shipped.",
+  "summary": "Selection fix shipped: playoff rate adjustment (PTS 0.963, 3PM 0.970, AST 0.980, REB 0.990). Root cause of playoff OVER losses (-21.5% ROI) was systematic projection bias, not calibration. 36 tests pass.",
   "experiment": null,
   "watching_for": null,
   "next_action": null,
@@ -13,7 +13,7 @@
     "kind": "grade_event",
     "label": "after a week of games",
     "target": null,
-    "baseline": "2026-10-12T21:23:47+00:00",
+    "baseline": "2026-10-12T21:31:25+00:00",
     "events": [],
     "target_date": null,
     "monitoring": false
