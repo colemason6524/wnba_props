@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "project_id": "wnba_props",
-  "updated_at": "2026-10-12T16:30:21+00:00",
+  "updated_at": "2026-10-12T20:51:42+00:00",
   "status": "observing",
-  "summary": "WNBA Finals begin Oct 17. Monitoring for final series.",
+  "summary": "Fix 1 shipped: refit calibration lambdas on Sep-Oct 2026 ledger data. PTS 1.0->0.3 (ECE 0.105->0.051), 3PM 1.0->0.5 (ECE 0.086->0.052). REB/AST unchanged. Temporal validation confirms Oct holdout improvement. 246 tests pass.",
   "experiment": null,
   "watching_for": null,
   "next_action": null,
@@ -11,11 +11,12 @@
   "git_commit": "",
   "check_back": {
     "kind": "grade_event",
-    "label": "Finals start 10/17",
+    "label": "after a week of games",
     "target": null,
-    "baseline": "2026-10-12T16:30:21+00:00",
+    "baseline": "2026-10-12T20:51:42+00:00",
     "events": [],
-    "target_date": null
+    "target_date": null,
+    "monitoring": false
   },
   "docs": [
     {
