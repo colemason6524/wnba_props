@@ -1,8 +1,8 @@
 {
-  "calibration_lambda": 1.0,
-  "code_commit": "2743c3ee3d739bab3768d5a390c89ffc35c6feda",
+  "calibration_lambda": 0.5,
+  "code_commit": "c59d7dd1aa5c358e63a866413fdcd3d55e1ab597",
   "feature_version": "wnba-features-v1",
-  "fit_at": "2026-09-17T02:54:38.473043+00:00",
+  "fit_at": "2026-10-12T20:51:08.866012+00:00",
   "model_id": "wnba-props-residual-v1",
   "n_rows": 2441,
   "pairs": [
@@ -9774,5 +9774,5 @@
   "prop_type": "3PM",
   "schema_version": 1,
   "source_model_version": "wnba-props-shadow-v2",
-  "trained_through": "2026-08-28"
+  "trained_through": "2026-10-12"
 }
