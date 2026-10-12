@@ -170,6 +170,32 @@ def project_minutes(
     )
 
 
+# Bounds for player-specific volatility scaling. A player's game-to-game
+# rate volatility (features.rate_sd) can differ sharply from the pooled
+# residual distribution. Scale the sampled rate_error so volatile players
+# get wider distributions (less overconfidence) and consistent players get
+# tighter ones. Capped to avoid extreme scaling from noisy sd estimates.
+VOLATILITY_RATIO_MIN = 0.5
+VOLATILITY_RATIO_MAX = 2.0
+
+
+def _volatility_ratio(features: "PlayerFeatures", residuals: "ResidualArtifact") -> float:
+    """Ratio of player-specific rate volatility to pooled residual volatility."""
+    player_sd = getattr(features, "rate_sd", 0.0) or 0.0
+    if player_sd <= 0:
+        return 1.0
+    errors = [p[1] for p in residuals.pairs]
+    if len(errors) < 2:
+        return 1.0
+    mean_e = sum(errors) / len(errors)
+    var_e = sum((e - mean_e) ** 2 for e in errors) / len(errors)
+    pooled_sd = var_e ** 0.5
+    if pooled_sd <= 0:
+        return 1.0
+    ratio = player_sd / pooled_sd
+    return max(VOLATILITY_RATIO_MIN, min(VOLATILITY_RATIO_MAX, ratio))
+
+
 def simulate_prop(
     *,
     features: PlayerFeatures,
@@ -190,6 +216,10 @@ def simulate_prop(
     pair_count = len(residuals.pairs)
     dnp = _clamp(minutes.dnp_probability, 0.0, 1.0)
 
+    # Player-specific volatility: scale pooled rate errors so high-variance
+    # players (e.g. streaky stars) get appropriately wider distributions.
+    vol_ratio = _volatility_ratio(features, residuals)
+
     wins_over = 0
     wins_under = 0
     pushes = 0
@@ -204,7 +234,7 @@ def simulate_prop(
             continue
         minutes_z, rate_error = residuals.pairs[rng.randrange(pair_count)]
         sampled_minutes = max(0.0, minutes.projected_minutes + minutes.minutes_sd * minutes_z)
-        sampled_rate = max(0.0, projected_rate + rate_error)
+        sampled_rate = max(0.0, projected_rate + rate_error * vol_ratio)
         value = max(0, int(round(sampled_minutes * sampled_rate)))
         played += 1
         values.append(value)

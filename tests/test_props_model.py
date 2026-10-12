@@ -15,7 +15,12 @@ from wnba_props.modeling.calibration import (
     load_residual_artifact,
     save_residual_artifact,
 )
-from wnba_props.modeling.minutes import dnp_probability, project_minutes, simulate_prop
+from wnba_props.modeling.minutes import (
+    _volatility_ratio,
+    dnp_probability,
+    project_minutes,
+    simulate_prop,
+)
 from wnba_props.modeling.props_forecast import forecast_prop
 from wnba_props.modeling.rates import game_environment_factor, project_rate
 from wnba_props.features.positions import position_class
@@ -140,6 +145,22 @@ class SimulationTests(unittest.TestCase):
             simulations=500,
         )
         self.assertEqual(first.over_probability, second.over_probability)
+
+    def test_volatility_ratio_scales_with_player_sd(self) -> None:
+        # High-variance player gets ratio > 1 (wider distribution)
+        features = _features(rate_sd=0.40)
+        artifact = _artifact(pairs=tuple((0.0, 0.1 if i % 2 == 0 else -0.1) for i in range(50)))
+        ratio = _volatility_ratio(features, artifact)
+        self.assertGreater(ratio, 1.0)
+        self.assertLessEqual(ratio, 2.0)
+        # Low-variance player gets ratio < 1 (tighter distribution)
+        features_tight = _features(rate_sd=0.02)
+        ratio_tight = _volatility_ratio(features_tight, artifact)
+        self.assertLess(ratio_tight, 1.0)
+        self.assertGreaterEqual(ratio_tight, 0.5)
+        # Zero sd defaults to 1.0 (no scaling)
+        features_zero = _features(rate_sd=0.0)
+        self.assertEqual(_volatility_ratio(features_zero, artifact), 1.0)
 
     def test_rate_blend_prefers_recent(self) -> None:
         projection = project_rate(_features(rate_l5=0.9, rate_recency_weighted=0.9, rate_season=0.5))
