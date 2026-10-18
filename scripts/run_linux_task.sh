@@ -21,6 +21,19 @@ export TZ=${TZ:-America/Detroit}
 export PYTHONUNBUFFERED=1
 export PYTHONPYCACHEPREFIX=${PYTHONPYCACHEPREFIX:-.pycache}
 ROLLUP_COMMAND=()
+# Valid --slot choices for run_forecast_pipeline.py. Validated here (not just
+# in argparse) so a misconfigured systemd instance (e.g. sports-wnba-forecast@finalsg1)
+# fails fast with a clear message instead of a cryptic argparse INVALIDARGUMENT
+# after the timer already fired. See 2026-10-17 Game 1 one-off failure.
+VALID_FORECAST_SLOTS="morning afternoon pregame evening late"
+validate_forecast_slot() {
+    local slot="$1"
+    case " $VALID_FORECAST_SLOTS " in
+        *" $slot "*) return 0 ;;
+    esac
+    printf "ERROR: invalid WNBA forecast slot: %s (must be one of: %s)\n" "$slot" "$VALID_FORECAST_SLOTS" >&2
+    return 3
+}
 
 if [[ ! -x "$PYTHON_EXE" ]]; then
     printf 'Project Python interpreter is unavailable: %s\n' "$PYTHON_EXE" >&2
@@ -34,6 +47,7 @@ case "$TASK" in
         LOG_FILE="$LOG_DIR/wnba_forecast.log"
         TIMEOUT=90m
         FORECAST_SLOT=${WNBA_FORECAST_SLOT:-evening}
+        validate_forecast_slot "$FORECAST_SLOT" || exit 3
         if [[ "$FORECAST_SLOT" == "pregame" ]]; then
             # The pregame run sleeps until the capture window before the
             # earliest tip, so it needs a much longer wall-clock budget.
@@ -54,6 +68,7 @@ case "$TASK" in
         LOG_FILE="$LOG_DIR/wnba_forecast_refresh.log"
         TIMEOUT=90m
         FORECAST_SLOT=${WNBA_FORECAST_SLOT:-late}
+        validate_forecast_slot "$FORECAST_SLOT" || exit 3
         COMMAND=("$PYTHON_EXE" run_forecast_pipeline.py --slot "$FORECAST_SLOT" --refresh-injuries)
         if [[ "${WNBA_SEND_DISCORD:-true}" != "false" ]]; then
             COMMAND+=(--send-discord)
