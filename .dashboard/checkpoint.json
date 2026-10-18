@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "project_id": "wnba_props",
-  "updated_at": "2026-10-13T01:04:55+00:00",
+  "updated_at": "2026-10-18T00:26:05+00:00",
   "status": "observing",
-  "summary": "Collection phase: fixes shipped, monitoring live impact. Will flag when recalibration or selection review needed.",
+  "summary": "Evening check-in: the Finals Game 1 one-off 2:27pm ET board FAILED on fire (service exited INVALIDARGUMENT after 134ms) - the one-off timer passed --slot finalsg1 but run_forecast_pipeline.py only accepts {morning,afternoon,pregame,evening,late}. Game 1 (Dream @ Valkyries, 3:30pm tip) got no pre-tip board; the standing 6:45pm board ran clean and correctly found no eligible games (tip passed). Dead one-off timer sports-wnba-forecast@finalsg1.timer disabled. LESSON for Game 4 (Oct 24, 1pm tip): arm the one-off with the existing afternoon slot, never a custom slot name. Game 1 grading fires via the standing grade timer 10:17 UTC Oct 18.",
   "experiment": null,
   "watching_for": null,
   "next_action": null,
@@ -11,9 +11,9 @@
   "git_commit": "",
   "check_back": {
     "kind": "grade_event",
-    "label": "after a week of games",
+    "label": "checkin-2026-10-17-evening",
     "target": null,
-    "baseline": "2026-10-13T01:04:55+00:00",
+    "baseline": "2026-10-18T00:26:05+00:00",
     "events": [],
     "target_date": null,
     "monitoring": false
