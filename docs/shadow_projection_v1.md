@@ -9,7 +9,7 @@
 > The rollup read `outputs/backtests/shadow_grade_*.json`, a directory that never
 > existed in `~/wnba_props` or in the frozen `~/wnba_props_shadow` checkout, so it
 > printed "No terminal shadow grading reports are available." and exited 0 on
-> every scheduled run. See `docs/INTEGRITY_AUDIT_2026-10-22.md`, section 2. The
+> every scheduled run. See `docs/INTEGRITY_AUDIT_2026-10-22.md`, section 4. The
 > model and grading code below is unchanged and remains runnable by hand for
 > provenance; nothing schedules it.
 

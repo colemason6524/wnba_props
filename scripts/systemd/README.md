@@ -57,7 +57,7 @@ and `wnba_props/shadow/rollup.py`. They pointed at the frozen checkout
 `~/wnba_props_shadow` and ran a rollup whose input directory `outputs/backtests/`
 never existed in either checkout, so every run since 2026-09-09 exited 0 having
 read nothing. Restore from git history if the research pipeline is ever revived
-(see `docs/INTEGRITY_AUDIT_2026-10-22.md`, section 2).
+(see `docs/INTEGRITY_AUDIT_2026-10-22.md`, section 4).
 
 ## Prerequisites on the VM
 
