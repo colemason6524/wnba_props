@@ -48,8 +48,9 @@ PlayerProps.ai player lines
   chooses the better-EV side. These are versioned candidate settings: validate
   by replay before enabling, then record them with each comparison.
 - **Playoff phase:** set `WNBA_SEASON_PHASE=playoff` to label grading artifacts,
-  cumulative `outputs/grades/phase_summary.json`, and Discord recaps separately
-  from the regular season. The pipeline continues as one system across phases.
+  cumulative `outputs/grades/phase_summary.json` (a derived view of the ledger,
+  stamped with `_provenance`), and Discord recaps separately from the regular
+  season. The pipeline continues as one system across phases.
 - **Ledger integrity:** each capture carries a `snapshot_id` and `phase`.
   Earlier captures remain for audit; grading and ROI use the latest capture per
   `game_date/market/subject`. A later capture cannot inherit an earlier settled
@@ -81,10 +82,12 @@ PlayerProps.ai player lines
 
 | Unit | When | Runs |
 | --- | --- | --- |
-| `sports-wnba-forecast@afternoon.timer` | Sat/Sun 12:36 | `run_forecast_pipeline.py --slot afternoon --send-discord` |
-| `sports-wnba-forecast@pregame.timer` | daily 10:00 | `run_forecast_pipeline.py --slot pregame --send-discord` (one capture ~75 min before the earliest tip; retries an unhealthy board) |
 | `sports-wnba-forecast@evening.timer` | daily 18:45 | `run_forecast_pipeline.py --slot evening --send-discord` |
 | `sports-wnba-forecast-grade.timer` | daily 06:17 | `grade_forecast_board.py --send-discord` |
+
+`@afternoon.timer` and `@pregame.timer` are **disabled** as of 2026-10-22; the
+postseason is covered by one-off units per game. `sports-wnba-forecast@finalsg4.timer`
+was armed on 2026-10-22 for Sat 2026-10-24 16:00 UTC (1pm ET Game 4, `--slot afternoon`).
 
 Legacy timers (`sports-wnba-daily`, `sports-wnba-shadow-capture`,
 `sports-wnba-shadow-grade`) are **disabled**. The cutover helper is
@@ -109,8 +112,9 @@ models. It continues through the postseason with versioned changes.
   `scripts/reconcile_forecast_ledger.py` before changing these totals.
 - Use `scripts/evaluate_forecast_diagnostics.py` for latest-capture calibration
   and ROI by phase, market, side, and value label.
-- Set `WNBA_SEASON_PHASE=playoff` for postseason runs. Grading writes
-  `outputs/grades/phase_summary.json` and uses playoff recap titles.
+- Set `WNBA_SEASON_PHASE=playoff` for postseason runs. Grading writes the
+  derived `outputs/grades/phase_summary.json` view (ledger-derived; see its
+  `_provenance` block) and uses playoff recap titles.
 - Iterate in versioned batches: one change, offline/walk-forward replay, deploy
   only after confirming no leakage or pipeline regression. Stamp each snapshot
   with the config changes that produced it.
@@ -175,6 +179,12 @@ snapshots and the original Sep. 27 grade for audit; use corrected date/phase
 reporting rather than overwriting those artifacts.
 
 ## Playoff split ledger (reviewed 2026-09-30)
+
+> **Superseded as a source.** The splits below were read from
+> `phase_summary.json` while it was treated as an independent record. That file
+> is a derived view of the ledger and had already drifted from it; the ledger
+> recompute in `docs/INTEGRITY_AUDIT_2026-10-22.md` is authoritative. These
+> numbers are kept as history, not as the record.
 
 Sep. 29 was the first fully verified playoff capture: pregame (21:15Z, 87 rows)
 + evening (22:45Z), all rows phase=playoff, and the Sep. 30 morning timer graded
@@ -276,8 +286,10 @@ UNDER even when only `over_odds` is present. Such a row is labeled `UNPRICED`
 records its WIN/LOSS/PUSH/VOID outcome with `units=null`. Grade summaries report
 these separately under `unpriced` (evaluated/wins/losses/pushes/voids), distinct
 from still-pending rows; this preserves forecast-accuracy evidence without
-inventing a payout. All `paper_play` rows are priced, so the paper ROI record is
-not affected. Historical rows previously left `UNPRICED` can be resolved by
+inventing a payout. Recommended rows (`wnba_props.ledger.is_recommended()`) are
+priced by construction — an unpriced row carries `value: "unpriced"` and never a
+recommended label (0 of 700 recommended latest rows have `price: null`) — so the
+paper ROI record is not affected. Historical rows previously left `UNPRICED` can be resolved by
 rerunning that date's grader after this code is deployed; no historical price
 or units are fabricated.
 

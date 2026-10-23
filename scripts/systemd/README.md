@@ -8,15 +8,18 @@ if you change a unit on the VM, copy it back here, and vice versa.
 
 | Unit | Schedule (America/Detroit) | Command |
 | --- | --- | --- |
-| `sports-wnba-forecast@afternoon.timer` | weekends 12:36 | `run_forecast_pipeline.py --slot afternoon --send-discord` |
-| `sports-wnba-forecast@pregame.timer` | daily 10:00 | `run_forecast_pipeline.py --slot pregame --send-discord` (one schedule-aware capture ~75 min before the earliest tip) |
 | `sports-wnba-forecast@evening.timer` | daily 18:45 | `run_forecast_pipeline.py --slot evening --send-discord` |
 | `sports-wnba-forecast-grade.timer` | daily 06:17 | `grade_forecast_board.py --send-discord` |
 
-The afternoon run covers weekend early tip-offs and fires once at 12:36 ET on
-Saturdays and Sundays (off-peak, to avoid load spikes). The evening run is daily
-at 18:45 ET. The ledger supersedes the earlier slot's pending line with the later
-snapshot, so the same play is graded once. The grader defaults to the prior
+**Disabled as of 2026-10-22:** `sports-wnba-forecast@afternoon.timer` and
+`sports-wnba-forecast@pregame.timer` are installed but not enabled. Their
+schedules when armed are weekends 12:36 ET (`@afternoon`, off-peak to avoid load
+spikes) and daily 10:00 ET with a wait until ~75 minutes before the earliest tip
+(`@pregame`). During the postseason a game-pinned one-off is armed instead, e.g.
+`sports-wnba-forecast@finalsg4.timer` for Sat 2026-10-24 16:00 UTC, which runs
+`--slot afternoon`. The evening run is daily at 18:45 ET. The ledger supersedes
+the earlier slot's pending line with the later snapshot, so the same play is
+graded once. The grader defaults to the prior
 calendar day because it runs the next morning.
 
 The forecast pipeline prefers Bovada game markets when reachable, falls back to
@@ -28,10 +31,11 @@ game-market ROI.
 
 Set `WNBA_SEASON_PHASE=playoff` in `~/.config/wnba_props/env` for the postseason
 so grading artifacts, cumulative `outputs/grades/phase_summary.json`, and Discord
-recaps are labeled separately. The pregame timer fires once daily at 10:00 ET;
-the pipeline then waits until ~75 minutes before the earliest untipped game,
-captures once, and retries an unhealthy board (same `pregame` slot, so Discord
-delivery stays idempotent). The evening timer remains the daily fallback.
+recaps are labeled separately. When the pregame timer is armed it fires once
+daily at 10:00 ET; the pipeline then waits until ~75 minutes before the earliest
+untipped game, captures once, and retries an unhealthy board (same `pregame`
+slot, so Discord delivery stays idempotent). The evening timer remains the daily
+fallback.
 
 Snapshot-versioned model settings live in the environment file as well:
 `MARKET_BLEND_WEIGHT` (default 0.0 = off) and `EV_SIDE_SELECTION` (default
@@ -77,6 +81,10 @@ systemctl --user enable --now "sports-wnba-forecast@afternoon.timer" "sports-wnb
 systemctl --user disable --now sports-wnba-daily.timer
 systemctl --user list-timers | grep wnba
 ```
+
+On the current VM only `@evening` and `forecast-grade` are enabled. Leave
+`@afternoon` / `@pregame` installed but disabled; cover postseason games with a
+game-pinned one-off timer instead.
 
 Or run the cutover helper (Linux + macOS):
 

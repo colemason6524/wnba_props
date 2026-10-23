@@ -34,9 +34,13 @@ probability toward the no-vig market, and `EV_SIDE_SELECTION` (default off)
 chooses the side with the better expected value. Both are decision-layer
 settings; the underlying feature forecast remains price-independent. They are
 available for a validated candidate run but do not change production until
-enabled. Ledger rows carry a `paper_play` flag (`value == "playable"`) so the
-full forecast record can be graded alongside the positive-value subset. Prices
-classify value and determine flat-unit paper ROI.
+enabled. Ledger rows carry a `value` label (`playable`, `thin`, `no_value`, or
+legacy `FAVORABLE`/`UNFAVORABLE`), and older rows also carry a `paper_play`
+boolean. The graded headline counts only rows the board recommended —
+`wnba_props.ledger.is_recommended()`: the `paper_play` flag when the row carries
+one, otherwise `value == "playable"` — and the whole forecast record is reported
+separately as `all_rows` (context only, never the headline). Prices classify
+value and determine flat-unit paper ROI.
 
 Player props use the configured primary line (default FanDuel). If the model's
 selected side has no valid primary-book price, the price layer may use an
@@ -104,10 +108,13 @@ All times are America/Detroit:
 
 | Unit | Schedule | Command |
 | --- | --- | --- |
-| `sports-wnba-forecast@afternoon.timer` | Sat/Sun 12:36 | `run_forecast_pipeline.py --slot afternoon --send-discord` |
-| `sports-wnba-forecast@pregame.timer` | Daily 10:00 | `run_forecast_pipeline.py --slot pregame --send-discord` (waits until 75 min before the earliest tip; retries an unhealthy board) |
 | `sports-wnba-forecast@evening.timer` | Daily 18:45 | `run_forecast_pipeline.py --slot evening --send-discord` |
 | `sports-wnba-forecast-grade.timer` | Daily 06:17 | `grade_forecast_board.py --send-discord` |
+
+`@afternoon.timer` and `@pregame.timer` are **disabled** as of 2026-10-22.
+Postseason games are covered by disarmed one-off units instead; on 2026-10-22
+`sports-wnba-forecast@finalsg4.timer` was armed for Sat 2026-10-24 16:00 UTC
+(1pm ET Game 4) and runs `--slot afternoon`.
 
 Every capture is immutable in the board snapshot and ledger: each board file is
 named `forecast_board_{date}_{slot}_{snapshot_id}.json`, so no capture overwrites
@@ -191,8 +198,11 @@ reports the log directory and newest log date and can enforce a minimum with
 - `outputs/forecast_boards/`: immutable JSON board snapshots by date and slot.
 - `outputs/ledger/forecast_ledger.jsonl`: canonical paper-betting ledger; one row
   per capture identity, with the latest capture used for grading.
-- `outputs/grades/`: daily grading artifacts, plus `phase_summary.json` with
-  regular-season and playoff totals kept separate.
+- `outputs/grades/`: daily grading artifacts, plus `phase_summary.json` — a
+  cumulative **derived view** of the ledger, with regular-season and playoff
+  totals kept separate. It is recomputed from `forecast_ledger.jsonl` on every
+  grade run and carries a `_provenance` block naming that source and its
+  sha256; it is never an independent record.
 - `outputs/source_snapshots/`: timestamped raw PlayerProps payloads for audit.
 - `outputs/history/`: game-market snapshots and source diagnostics.
 - `outputs/logs/`: VM task logs; runtime artifacts are not committed.
