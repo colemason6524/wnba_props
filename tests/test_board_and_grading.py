@@ -644,11 +644,19 @@ class LedgerGradingTests(unittest.TestCase):
             {"market": "PTS", "outcome": PENDING, "units": None, "paper_play": False},
         ]
         summary = _summarize(rows)
+        # Headline is the recommended record only.
         self.assertEqual(summary["overall"]["wins"], 1)
-        self.assertEqual(summary["overall"]["losses"], 1)
+        self.assertEqual(summary["overall"]["plays"], 1)
+        self.assertEqual(summary["overall"]["units"], 0.91)
         self.assertEqual(summary["pending"], 1)
         self.assertEqual(summary["unpriced"]["evaluated"], 0)
-        self.assertEqual(summary["paper_play"]["plays"], 1)
+        # Pooled all-rows view survives as labelled context.
+        self.assertEqual(summary["all_rows"]["plays"], 3)
+        self.assertEqual(summary["all_rows"]["losses"], 1)
+        self.assertIn("context only", summary["all_rows"]["basis"])
+        self.assertEqual(summary["excluded"]["plays"], 2)
+        self.assertEqual(summary["excluded"]["units"], -1.0)
+        self.assertNotIn("PTS", summary["by_market"])
 
         evaluated_unpriced = _summarize(
             [{"market": "PTS", "outcome": LOSS, "units": None, "graded": True}]
@@ -658,13 +666,26 @@ class LedgerGradingTests(unittest.TestCase):
         self.assertEqual(evaluated_unpriced["unpriced"]["losses"], 1)
         self.assertEqual(evaluated_unpriced["overall"]["plays"], 0)
         self.assertNotIn("PTS", evaluated_unpriced["by_market"])
-        self.assertEqual(summary["paper_play"]["wins"], 1)
+
+        # Pre-flag rows resolve through the published value label.
+        legacy = _summarize(
+            [
+                {"market": "AST", "outcome": WIN, "units": 0.87, "value": "playable"},
+                {"market": "AST", "outcome": LOSS, "units": -1.0, "value": "no_value"},
+                {"market": "AST", "outcome": WIN, "units": 0.9, "value": "FAVORABLE"},
+            ]
+        )
+        self.assertEqual(legacy["overall"]["plays"], 1)
+        self.assertEqual(legacy["overall"]["units"], 0.87)
+        self.assertEqual(legacy["excluded"]["plays"], 2)
 
         from wnba_props.notifiers.forecast_discord import render_recap
 
         text = render_recap("2026-09-17", summary)
         self.assertIn("WNBA Forecast Recap - 2026-09-17", text)
+        self.assertIn("Recommended: 1-0-0", text)
         self.assertIn("ML:", text)
+        self.assertIn("Excluded: 2 of 3 priced rows were not recommended", text)
 
         unpriced_text = render_recap(
             "2026-09-30",
@@ -691,8 +712,8 @@ class SplitRecapTests(unittest.TestCase):
         from wnba_props.notifiers.forecast_discord import PLAYER_MARKETS, TEAM_MARKETS
 
         rows = [
-            {"market": "ML", "outcome": WIN, "units": 0.91},
-            {"market": "PTS", "outcome": LOSS, "units": -1.0},
+            {"market": "ML", "outcome": WIN, "units": 0.91, "value": "playable"},
+            {"market": "PTS", "outcome": LOSS, "units": -1.0, "value": "playable"},
         ]
         team = _subset_summary(rows, TEAM_MARKETS)
         player = _subset_summary(rows, PLAYER_MARKETS)
@@ -726,8 +747,14 @@ class PlayoffPhaseTests(unittest.TestCase):
         from grade_forecast_board import _phase_summary
 
         rows = [
-            {"phase": "regular", "market": "ML", "outcome": WIN, "units": 0.9},
-            {"phase": "playoff", "market": "PTS", "outcome": LOSS, "units": -1.0},
+            {"phase": "regular", "market": "ML", "outcome": WIN, "units": 0.9, "value": "playable"},
+            {
+                "phase": "playoff",
+                "market": "PTS",
+                "outcome": LOSS,
+                "units": -1.0,
+                "value": "playable",
+            },
         ]
         summary = _phase_summary(rows, "regular")
         self.assertIn("regular", summary)
@@ -738,11 +765,23 @@ class PlayoffPhaseTests(unittest.TestCase):
         from grade_forecast_board import _phase_summary
 
         rows = [
-            {"phase": "playoff", "market": "ML", "outcome": WIN, "units": 0.9},
-            {"phase": "playoff", "market": "SPREAD", "outcome": LOSS, "units": -1.0},
-            {"phase": "playoff", "market": "PTS", "outcome": WIN, "units": 0.8},
-            {"phase": "playoff", "market": "PTS", "outcome": LOSS, "units": -1.0},
-            {"phase": "playoff", "market": "REB", "outcome": WIN, "units": 0.5},
+            {"phase": "playoff", "market": "ML", "outcome": WIN, "units": 0.9, "value": "playable"},
+            {
+                "phase": "playoff",
+                "market": "SPREAD",
+                "outcome": LOSS,
+                "units": -1.0,
+                "value": "playable",
+            },
+            {"phase": "playoff", "market": "PTS", "outcome": WIN, "units": 0.8, "value": "playable"},
+            {
+                "phase": "playoff",
+                "market": "PTS",
+                "outcome": LOSS,
+                "units": -1.0,
+                "value": "playable",
+            },
+            {"phase": "playoff", "market": "REB", "outcome": WIN, "units": 0.5, "value": "playable"},
         ]
         playoff = _phase_summary(rows, "regular")["playoff"]
 

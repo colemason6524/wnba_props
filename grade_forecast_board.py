@@ -29,8 +29,10 @@ from wnba_props.ledger import (
     UNPRICED,
     VOID,
     WIN,
+    is_recommended,
     latest_rows,
     load_rows,
+    recommended_rows,
     roi_summary,
     settle_rows,
 )
@@ -139,13 +141,36 @@ def grade_ledger_row(row: dict, scores: dict, player_stats: dict) -> tuple[str, 
 
 
 def _summarize(rows: list[dict]) -> dict:
+    """Summarize a date or subset with the recommended record as headline.
+
+    ``overall`` covers only rows the board recommended (see
+    :func:`wnba_props.ledger.is_recommended`); ``by_market`` uses the same rows.
+    ``all_rows`` keeps the pooled figure over every latest row because the
+    grader's earlier headline reported it, but that pool mixes plays the board
+    told subscribers to skip with plays it published, so it is labelled context
+    and is never the number quoted as the product's record.
+    """
     graded = [
         row
-        for row in rows
+        for row in recommended_rows(rows)
         if row.get("outcome") in (WIN, LOSS, PUSH, VOID)
         and row.get("units") is not None
     ]
-    overall = roi_summary(rows)
+    overall = roi_summary(rows, recommended_only=True)
+    overall["basis"] = "recommended plays only (paper_play when present, else value == playable)"
+    all_rows = roi_summary(rows)
+    all_rows["basis"] = (
+        "context only: every latest row, including rows the board did not recommend"
+    )
+    excluded_rows = [
+        row
+        for row in latest_rows(rows)
+        if row.get("units") is not None
+        and row.get("outcome") in {WIN, LOSS, PUSH}
+        and not is_recommended(row)
+    ]
+    excluded = roi_summary(excluded_rows)
+    excluded["basis"] = "settled latest rows the board did not recommend"
     by_market: dict[str, dict] = {}
     for row in graded:
         market = str(row.get("market", ""))
@@ -178,7 +203,8 @@ def _summarize(rows: list[dict]) -> dict:
     paper_rows = [row for row in rows if row.get("paper_play")]
     return {
         "overall": overall,
-        "paper_play": roi_summary(paper_rows),
+        "all_rows": all_rows,
+        "excluded": excluded,
         "by_market": by_market,
         "pending": pending,
         "unpriced": {
@@ -297,10 +323,17 @@ def grade_date(
     (GRADES_DIR / "phase_summary.json").write_text(
         json.dumps(phase_summary, indent=2, sort_keys=True)
     )
+    recommended = summary["overall"]
+    pooled = summary["all_rows"]
     print(
-        f"[grade] updated={updated} overall={summary['overall']['wins']}-"
-        f"{summary['overall']['losses']}-{summary['overall']['pushes']} "
-        f"units={summary['overall']['units']:+.2f}"
+        f"[grade] updated={updated} recommended={recommended['wins']}-"
+        f"{recommended['losses']}-{recommended['pushes']} "
+        f"units={recommended['units']:+.2f} plays={recommended['plays']}"
+    )
+    print(
+        f"[grade] context (not the record): all rows {pooled['wins']}-{pooled['losses']}-"
+        f"{pooled['pushes']} units={pooled['units']:+.2f} plays={pooled['plays']} "
+        f"({summary['excluded']['plays']} settled plays not recommended)"
     )
 
     if send_discord:

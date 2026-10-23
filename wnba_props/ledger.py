@@ -12,6 +12,8 @@ LOSS = "LOSS"
 PUSH = "PUSH"
 VOID = "VOID"
 UNPRICED = "UNPRICED"
+# Value label the board publishes for a row it recommends as a bet.
+RECOMMENDED_VALUE = "playable"
 
 
 def _read_rows(path: Path) -> list[dict[str, Any]]:
@@ -63,6 +65,24 @@ def is_settled(row: dict[str, Any]) -> bool:
     return bool(row.get("graded")) or row.get("outcome") not in {PENDING, UNPRICED}
 
 
+def is_recommended(row: dict[str, Any]) -> bool:
+    """Whether the board published this row as a recommended play.
+
+    The ledger carries two labels for the same decision: the ``paper_play`` flag
+    (written by the board since 2026-09-24) and the published ``value`` label.
+    Neither is a performance view -- they are the same field read twice -- so
+    every reader resolves them here instead of testing one and silently pooling
+    the other. ``paper_play`` wins when present because it is the explicit
+    decision record; rows captured before the flag existed fall back to the
+    published label. Rows carrying neither (legacy preflight ``FAVORABLE`` /
+    ``UNFAVORABLE`` values) are context, never recommended plays.
+    """
+    flag = row.get("paper_play")
+    if flag is not None:
+        return bool(flag)
+    return str(row.get("value") or "").strip().lower() == RECOMMENDED_VALUE
+
+
 def _capture_order(row: dict[str, Any]) -> tuple[str, str]:
     return (
         str(row.get("captured_at") or ""),
@@ -89,6 +109,11 @@ def latest_rows(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
         if previous is None or order >= previous[0]:
             best[identity] = (order, row)
     return passthrough + [entry[1] for entry in best.values()]
+
+
+def recommended_rows(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Latest capture rows the board recommended as a play."""
+    return [row for row in latest_rows(rows) if is_recommended(row)]
 
 
 def append_rows(path: Path, rows: Iterable[dict[str, Any]]) -> int:
@@ -186,10 +211,19 @@ def settle_rows(
     return updated
 
 
-def roi_summary(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
+def roi_summary(
+    rows: Iterable[dict[str, Any]], *, recommended_only: bool = False
+) -> dict[str, Any]:
+    """Flat 1u ROI over settled latest-capture rows.
+
+    ``recommended_only`` restricts the record to rows the board recommended; the
+    default spans every latest row, which pools plays the board told subscribers
+    to skip and is context, not a performance record.
+    """
+    candidates = recommended_rows(rows) if recommended_only else latest_rows(rows)
     settled = [
         row
-        for row in latest_rows(rows)
+        for row in candidates
         if row.get("units") is not None
         and row.get("outcome") in {WIN, LOSS, PUSH}
     ]

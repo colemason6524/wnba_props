@@ -54,12 +54,29 @@ def _summaries(rows: list[dict]) -> dict:
         by_market[str(row.get("market", ""))].append(row)
         by_date[str(row.get("game_date", ""))].append(row)
     return {
-        "overall": roi_summary(rows),
-        "by_phase": {key: roi_summary(items) for key, items in sorted(by_phase.items())},
-        "by_market": {
-            key: roi_summary(items) for key, items in sorted(by_market.items())
+        "overall": roi_summary(rows, recommended_only=True),
+        "all_rows": roi_summary(rows),
+        "by_phase": {
+            key: {
+                "recommended": roi_summary(items, recommended_only=True),
+                "all_rows": roi_summary(items),
+            }
+            for key, items in sorted(by_phase.items())
         },
-        "by_date": {key: roi_summary(items) for key, items in sorted(by_date.items())},
+        "by_market": {
+            key: {
+                "recommended": roi_summary(items, recommended_only=True),
+                "all_rows": roi_summary(items),
+            }
+            for key, items in sorted(by_market.items())
+        },
+        "by_date": {
+            key: {
+                "recommended": roi_summary(items, recommended_only=True),
+                "all_rows": roi_summary(items),
+            }
+            for key, items in sorted(by_date.items())
+        },
     }
 
 
@@ -153,8 +170,14 @@ def main(argv: list[str] | None = None) -> int:
     print(f"[reconcile] wrote {args.out}")
     ready = report["summaries"]["overall"]
     print(
-        f"[reconcile] latest ROI {ready['wins']}-{ready['losses']}-{ready['pushes']} "
-        f"{ready['units']:+.3f}u"
+        f"[reconcile] recommended ROI {ready['wins']}-{ready['losses']}-{ready['pushes']} "
+        f"{ready['units']:+.3f}u over {ready['plays']} played"
+    )
+    pooled = report["summaries"]["all_rows"]
+    print(
+        f"[reconcile] context only, all latest rows {pooled['wins']}-{pooled['losses']}-"
+        f"{pooled['pushes']} {pooled['units']:+.3f}u over {pooled['plays']} priced; "
+        f"{pooled['plays'] - ready['plays']} were not recommended and are not a record"
     )
     return 0
 

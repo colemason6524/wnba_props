@@ -193,10 +193,18 @@ def _send_with_retry(
 
 
 def render_recap(screen_date: str, summary: dict, *, title: str = "WNBA Forecast Recap") -> str:
+    """Render the graded recap with the recommended record as the headline.
+
+    ``overall`` is the recommended-play record. The pooled all-rows view in
+    ``all_rows`` is counted, not printed: quoting a pooled ROI beside the
+    recommended record is how the two numbers get confused, so the recap names
+    the exclusion and points at the artifact instead.
+    """
     overall = summary.get("overall", {})
     lines = [f"{title} - {screen_date}", ""]
     lines.append(
-        f"Overall: {overall.get('wins', 0)}-{overall.get('losses', 0)}-{overall.get('pushes', 0)}"
+        f"Recommended: {overall.get('wins', 0)}-{overall.get('losses', 0)}-"
+        f"{overall.get('pushes', 0)}"
         f" | {overall.get('units', 0.0):+.2f}u"
         + (f" | ROI {overall['roi']:+.1%}" if overall.get("roi") is not None else "")
         + f" ({overall.get('plays', 0)} priced)"
@@ -207,6 +215,13 @@ def render_recap(screen_date: str, summary: dict, *, title: str = "WNBA Forecast
         lines.append(
             f"{market}: {record.get('wins', 0)}-{record.get('losses', 0)}-{record.get('pushes', 0)}"
             f" | {record.get('units', 0.0):+.2f}u{roi_text}"
+        )
+    all_rows = summary.get("all_rows") or {}
+    excluded = summary.get("excluded") or {}
+    if all_rows.get("plays") and excluded.get("plays"):
+        lines.append(
+            f"Excluded: {excluded['plays']} of {all_rows['plays']} priced rows were not "
+            "recommended (pooled view in the grade artifact, not a performance record)"
         )
     unpriced = summary.get("unpriced", {})
     if unpriced.get("evaluated", 0):
