@@ -10,6 +10,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from datetime import date, datetime, timedelta, timezone
@@ -247,6 +248,51 @@ def _phase_summary(rows: list[dict], default_phase: str) -> dict:
     return summary
 
 
+def _display_path(path: Path) -> str:
+    try:
+        return str(path.relative_to(ROOT))
+    except ValueError:
+        return str(path)
+
+
+def _phase_summary_provenance(ledger_path: Path, rows: list[dict]) -> dict:
+    """Name the ledger this aggregate was derived from, and fingerprint it.
+
+    ``outputs/grades/phase_summary.json`` is a cumulative *view*. Nothing else
+    recomputes it, so without this block a stale copy is indistinguishable from
+    an independent account of the same record.
+    """
+    try:
+        digest = hashlib.sha256(ledger_path.read_bytes()).hexdigest()
+    except OSError:
+        digest = None
+    return {
+        "derived": True,
+        "derived_from": _display_path(ledger_path),
+        "derived_from_sha256": digest,
+        "ledger_rows": len(rows),
+        "selection": "latest capture per proposition_id",
+        "row_basis": {
+            "overall": "rows the board recommended (paper_play, else value == playable)",
+            "all_rows": "every priced row; context only, never the record",
+            "excluded": "settled priced rows that were not recommended",
+        },
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "note": (
+            "Cumulative display aggregate, not a second source of truth. Quote ROI "
+            "only from a fresh recompute of the ledger above."
+        ),
+    }
+
+
+def _phase_summary_document(
+    rows: list[dict], default_phase: str, ledger_path: Path
+) -> dict:
+    document = _phase_summary(rows, default_phase)
+    document["_provenance"] = _phase_summary_provenance(ledger_path, rows)
+    return document
+
+
 def _recap_titles(phase: str) -> tuple[str, str, str]:
     if phase == "playoff":
         return (
@@ -303,7 +349,9 @@ def grade_date(
 
     GRADES_DIR.mkdir(parents=True, exist_ok=True)
     artifact = GRADES_DIR / f"forecast_grade_{screen_date.isoformat()}.json"
-    phase_summary = _phase_summary(ledger_rows, settings.season_phase)
+    phase_summary = _phase_summary_document(
+        ledger_rows, settings.season_phase, FORECAST_LEDGER
+    )
     artifact.write_text(
         json.dumps(
             {

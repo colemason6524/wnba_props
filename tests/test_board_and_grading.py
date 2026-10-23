@@ -761,6 +761,29 @@ class PlayoffPhaseTests(unittest.TestCase):
         self.assertIn("playoff", summary)
         self.assertEqual(summary["playoff"]["overall"]["losses"], 1)
 
+    def test_phase_summary_document_labels_its_source(self) -> None:
+        import hashlib
+        import tempfile
+        from pathlib import Path as _Path
+
+        from grade_forecast_board import _phase_summary_document
+
+        row = {"phase": "playoff", "market": "PTS", "outcome": WIN, "units": 0.9, "value": "playable"}
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = _Path(tmp) / "forecast_ledger.jsonl"
+            ledger.write_text('{"proposition_id": "x"}\n')
+            expected_digest = hashlib.sha256(ledger.read_bytes()).hexdigest()
+            document = _phase_summary_document([dict(row)], "regular", ledger)
+
+        self.assertEqual(document["playoff"]["overall"]["plays"], 1)
+        provenance = document["_provenance"]
+        self.assertTrue(provenance["derived"])
+        self.assertEqual(provenance["derived_from"], str(ledger))
+        self.assertEqual(provenance["derived_from_sha256"], expected_digest)
+        self.assertEqual(provenance["ledger_rows"], 1)
+        self.assertIn("never the record", provenance["row_basis"]["all_rows"])
+        self.assertIn("not a second source of truth", provenance["note"])
+
     def test_phase_summary_splits_team_and_player_books(self) -> None:
         from grade_forecast_board import _phase_summary
 
