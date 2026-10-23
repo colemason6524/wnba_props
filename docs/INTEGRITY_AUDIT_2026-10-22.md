@@ -148,7 +148,14 @@ two `run_projection_shadow.py` / `grade_projection_shadow.py` entry points were
 documents manual use, and `tests/test_shadow_grading.py` imports the latter. What
 was retired is the rollup reader, its library module, its tests, its four unit
 files, its `run_linux_task.sh` arms, and its `sync_from_vm.sh` pull — nothing
-live depended on any of them.
+live depended on any of them. Copies of the four unit files installed under
+`~/.config/systemd/user/` (dated 2026-09-13) remain on the host, `disabled`; they
+are inert — `sports-wnba-shadow-grade.service` still carries
+`Environment=PROJECT_DIR=%h/wnba_props_shadow` and
+`ConditionPathExists=%h/wnba_props_shadow/config/shadow_v2_calibration.json`, and
+its `ExecStart` (`run_linux_task.sh shadow-grade`) now exits 2. They were left in
+place rather than removed so the freeze leaves a trace; nothing can arm them
+without an explicit `systemctl --user enable`.
 
 ## 5. Row-level diff: pooled headline vs recommended headline
 
@@ -406,7 +413,9 @@ Kept deliberately: `wnba_props/shadow/sources.py` (imported by
 `grade_forecast_board.py`), and the two unscheduled research entry points
 `run_projection_shadow.py` / `grade_projection_shadow.py`. Verified before
 deletion that no live task, timer, or code path referenced the retired pieces;
-`run_linux_task.sh shadow-grade` now exits 2.
+`run_linux_task.sh shadow-grade` now exits 2. The host's installed unit copies
+under `~/.config/systemd/user/` are disabled and were left as inert evidence of
+the freeze (§4).
 
 ### 10.3 `efbab6c` — the derived view is labelled
 
