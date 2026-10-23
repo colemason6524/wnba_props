@@ -462,17 +462,22 @@ digest.
 
 ## 11. Step 5 — integrity re-check after the changes
 
-Run on the live tree after `06256fd`:
+Run on the live tree after `a1f730d` (four code/doc commits plus the dashboard
+diary commit):
 
-- Tests: `Ran 238 tests in 0.498s` / `OK`.
+- Tests: `Ran 238 tests` / `OK`.
 - Reconciliation: identical totals to §10.5, both lines present and labelled.
-- Headline as published by the fixed code path:
-  `Recommended: 359-338-1, −20.781u, −2.98% (698 settled)` plus
-  `Excluded: 681 of 1379 priced rows were not recommended`.
+- Headline as published by the fixed code path (recap rendered live from the
+  ledger through `_summarize` + `render_recap`):
+  `Recommended: 359-338-1 | -20.78u | ROI -3.0% (698 priced)` plus
+  `Excluded: 681 of 1379 priced rows were not recommended …`.
+- Derived-view label: `_phase_summary_document()` emits `_provenance` with
+  `derived: true`, `derived_from: outputs/ledger/forecast_ledger.jsonl`,
+  `derived_from_sha256`, `ledger_rows: 2060` and the row-basis note.
 - Ledger bytes unchanged (same md5); no history file rewritten; `git log` shows
-  the four commits on `main`, working tree clean apart from the untracked
-  `outputs/archive/` and `outputs/grades.backup-20260924T020000Z/` directories
-  that predate this audit.
+  `7e84f28`, `df65992`, `efbab6c`, `06256fd`, `e4d5e4e`, `5b2d215`, `a1f730d`
+  on `main`, working tree clean apart from the untracked `outputs/archive/` and
+  `outputs/grades.backup-20260924T020000Z/` directories that predate this audit.
 
 **Verdict: three findings, three fixes, record itself sound.** The WNBA ledger
 was not wrong; the number published from it was, by including 681 rows the board
