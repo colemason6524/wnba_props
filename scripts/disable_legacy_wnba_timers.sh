@@ -3,8 +3,8 @@
 #
 # Legacy units (systemd user units on the VM):
 #   sports-wnba-daily.timer          -> run_nightly.py (heuristic screener)
-#   sports-wnba-shadow-capture.timer -> run_projection_shadow.py
-#   sports-wnba-shadow-grade.timer   -> grade_projection_shadow.py + shadow_rollup.py
+# (The shadow capture/grade units and their rollup were deleted on
+# 2026-10-22; they never produced a report. See docs/INTEGRITY_AUDIT_2026-10-22.md.)
 #
 # macOS launchd (local): com.colemason.wnba-props.daily
 #
@@ -14,8 +14,6 @@ set -u
 
 LEGACY_TIMERS=(
     sports-wnba-daily.timer
-    sports-wnba-shadow-capture.timer
-    sports-wnba-shadow-grade.timer
 )
 NEW_TIMERS=(
     "sports-wnba-forecast@afternoon.timer"

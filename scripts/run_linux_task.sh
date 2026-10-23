@@ -20,7 +20,6 @@ fi
 export TZ=${TZ:-America/Detroit}
 export PYTHONUNBUFFERED=1
 export PYTHONPYCACHEPREFIX=${PYTHONPYCACHEPREFIX:-.pycache}
-ROLLUP_COMMAND=()
 # Valid --slot choices for run_forecast_pipeline.py. Validated here (not just
 # in argparse) so a misconfigured systemd instance (e.g. sports-wnba-forecast@finalsg1)
 # fails fast with a clear message instead of a cryptic argparse INVALIDARGUMENT
@@ -101,21 +100,6 @@ case "$TASK" in
         COMMAND=("$PYTHON_EXE" run_nightly.py)
         REQUIRED_SECRET=WNBA_PROPS_DISCORD_WEBHOOK_URL
         ;;
-    shadow-capture)
-        # DEPRECATED legacy shadow capture. Rollback only.
-        LOG_FILE="$LOG_DIR/wnba_shadow_capture.log"
-        TIMEOUT=90m
-        COMMAND=("$PYTHON_EXE" run_projection_shadow.py)
-        REQUIRED_SECRET=
-        ;;
-    shadow-grade)
-        # DEPRECATED legacy shadow grading. Rollback only.
-        LOG_FILE="$LOG_DIR/wnba_shadow_grade.log"
-        TIMEOUT=30m
-        COMMAND=("$PYTHON_EXE" grade_projection_shadow.py --all-pending)
-        ROLLUP_COMMAND=("$PYTHON_EXE" shadow_rollup.py)
-        REQUIRED_SECRET=
-        ;;
     *)
         printf 'Unknown task: %s\n' "$TASK" >&2
         exit 2
@@ -139,11 +123,6 @@ printf '%s  Running: %s\n' "$(date '+%Y-%m-%d %H:%M:%S %Z')" "${COMMAND[*]}"
 
 timeout --signal=TERM --kill-after=2m "$TIMEOUT" "${COMMAND[@]}"
 EXIT_CODE=$?
-if [[ $EXIT_CODE -eq 0 && ${#ROLLUP_COMMAND[@]} -gt 0 ]]; then
-    printf '%s  Running: %s\n' "$(date '+%Y-%m-%d %H:%M:%S %Z')" "${ROLLUP_COMMAND[*]}"
-    timeout --signal=TERM --kill-after=2m "$TIMEOUT" "${ROLLUP_COMMAND[@]}"
-    EXIT_CODE=$?
-fi
 printf '%s  Finished %s with exit code %s\n' \
     "$(date '+%Y-%m-%d %H:%M:%S %Z')" "$TASK" "$EXIT_CODE"
 exit "$EXIT_CODE"

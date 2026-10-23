@@ -43,12 +43,17 @@ false). Validate them by replay before enabling for a live candidate run.
 | Unit | Was | Status |
 | --- | --- | --- |
 | `sports-wnba-daily.timer` | `run_nightly.py` heuristic screener | disabled |
-| `sports-wnba-shadow-capture.timer` | `run_projection_shadow.py` | disabled |
-| `sports-wnba-shadow-grade.timer` | `grade_projection_shadow.py` + rollup | disabled |
 
 Legacy code remains in the repo for rollback and historical grading, but the
 legacy timers must stay disabled so the old board never competes with the
 forecast ledger or posts to the active Discord webhook.
+
+The two shadow units were deleted on 2026-10-22 together with `shadow_rollup.py`
+and `wnba_props/shadow/rollup.py`. They pointed at the frozen checkout
+`~/wnba_props_shadow` and ran a rollup whose input directory `outputs/backtests/`
+never existed in either checkout, so every run since 2026-09-09 exited 0 having
+read nothing. Restore from git history if the research pipeline is ever revived
+(see `docs/INTEGRITY_AUDIT_2026-10-22.md`, section 2).
 
 ## Prerequisites on the VM
 
@@ -69,7 +74,7 @@ forecast ledger or posts to the active Discord webhook.
 cp scripts/systemd/sports-wnba-* ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now "sports-wnba-forecast@afternoon.timer" "sports-wnba-forecast@pregame.timer" "sports-wnba-forecast@evening.timer" sports-wnba-forecast-grade.timer
-systemctl --user disable --now sports-wnba-daily.timer sports-wnba-shadow-capture.timer sports-wnba-shadow-grade.timer
+systemctl --user disable --now sports-wnba-daily.timer
 systemctl --user list-timers | grep wnba
 ```
 

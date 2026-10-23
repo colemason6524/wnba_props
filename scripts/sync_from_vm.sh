@@ -6,7 +6,6 @@ set -u
 VM_KEY=${VM_SSH_KEY:-"$HOME/Downloads/RunThemScripts_key.pem"}
 VM_HOST=${VM_HOST:-"azureuser@130.131.0.6"}
 VM_WNBA=${VM_WNBA_DIR:-"wnba_props"}
-VM_SHADOW=${VM_SHADOW_DIR:-"wnba_props_shadow"}
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 DRY_RUN=${DRY_RUN:-0}
 
@@ -31,13 +30,11 @@ pull "$VM_WNBA/outputs/forecast_boards/" "$REPO_ROOT/outputs/forecast_boards/"
 pull "$VM_WNBA/outputs/ledger/" "$REPO_ROOT/outputs/ledger/"
 pull "$VM_WNBA/outputs/grades/" "$REPO_ROOT/outputs/grades/"
 pull "$VM_WNBA/outputs/source_snapshots/" "$REPO_ROOT/outputs/source_snapshots/"
-pull "$VM_SHADOW/outputs/" "$REPO_ROOT/outputs/shadow-vm/"
 
-printf 'Sync complete: history=%s health=%s vm-logs=%s boards=%s grades=%s source-snapshots=%s shadow-vm=%s\n' \
+printf 'Sync complete: history=%s health=%s vm-logs=%s boards=%s grades=%s source-snapshots=%s\n' \
     "$(find "$REPO_ROOT/outputs/history" -name '*.json' 2>/dev/null | wc -l | tr -d ' ')" \
     "$(find "$REPO_ROOT/outputs/health" -name '*.jsonl' 2>/dev/null | wc -l | tr -d ' ')" \
     "$(find "$REPO_ROOT/outputs/vm-logs" -type f 2>/dev/null | wc -l | tr -d ' ')" \
     "$(find "$REPO_ROOT/outputs/forecast_boards" -name '*.json' 2>/dev/null | wc -l | tr -d ' ')" \
     "$(find "$REPO_ROOT/outputs/grades" -name '*.json' 2>/dev/null | wc -l | tr -d ' ')" \
-    "$(find "$REPO_ROOT/outputs/source_snapshots" -type f 2>/dev/null | wc -l | tr -d ' ')" \
-    "$(find "$REPO_ROOT/outputs/shadow-vm" -type f 2>/dev/null | wc -l | tr -d ' ')"
+    "$(find "$REPO_ROOT/outputs/source_snapshots" -type f 2>/dev/null | wc -l | tr -d ' ')"

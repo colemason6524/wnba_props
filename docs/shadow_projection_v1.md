@@ -3,6 +3,15 @@
 > Historical research record only. This shadow system is retired, not deployed,
 > and not part of the current Linux production schedule. The Windows references
 > below describe the old 2026 research environment and are not instructions.
+>
+> **Retired 2026-10-22:** the rollup CLI (`shadow_rollup.py`), its library
+> (`wnba_props/shadow/rollup.py`), and both shadow systemd units were removed.
+> The rollup read `outputs/backtests/shadow_grade_*.json`, a directory that never
+> existed in `~/wnba_props` or in the frozen `~/wnba_props_shadow` checkout, so it
+> printed "No terminal shadow grading reports are available." and exited 0 on
+> every scheduled run. See `docs/INTEGRITY_AUDIT_2026-10-22.md`, section 2. The
+> model and grading code below is unchanged and remains runnable by hand for
+> provenance; nothing schedules it.
 
 This is a research-only challenger to the existing daily screener. It does not replace or modify the nightly runner, heuristic screener, Discord policy, scheduled-task scripts, or normal `screen_run_*.json` exports.
 
@@ -93,11 +102,12 @@ The batch grader fetches the scoreboard once per slate date and each final boxsc
 
 ## Multi-slate evidence rollup
 
-```bash
-python3 shadow_rollup.py
-```
+> Retired 2026-10-22: `shadow_rollup.py` no longer exists. Historical rollup
+> artifacts cited below were produced outside this repository. Grading still
+> writes `outputs/backtests/shadow_grade_*.json` when run by hand, but nothing
+> aggregates them.
 
-The primary report admits only projections captured 20–90 minutes before scheduled tip. If deliberate duplicate snapshots exist, it selects the closest eligible pregame capture for each player, game, prop, bookmaker, and model version. Later or overly early snapshots remain in diagnostics but cannot enter the primary evidence set.
+The primary report admitted only projections captured 20–90 minutes before scheduled tip. If deliberate duplicate snapshots exist, it selects the closest eligible pregame capture for each player, game, prop, bookmaker, and model version. Later or overly early snapshots remain in diagnostics but cannot enter the primary evidence set.
 
 The rollup compares model MAE and Brier score with the sportsbook line and no-vig market probabilities. It also reports interval coverage, minutes error, context and price coverage, results by slate/game, and research-only flat-stake units.
 

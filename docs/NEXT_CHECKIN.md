@@ -48,8 +48,8 @@ check-in; grading lands Oct. 1 at 06:17 ET.
 
 ## Operating guardrails
 
-- Do not re-enable legacy timers (`sports-wnba-daily`, `...shadow-capture`,
-  `...shadow-grade`) or recreate Windows/macOS task wrappers.
+- Do not re-enable legacy timers (`sports-wnba-daily`) or recreate
+  Windows/macOS task wrappers. The shadow units were deleted on 2026-10-22.
 - Do not schedule anything on the Mac (no launchd).
 - Do not mix the shadow worktree into the live VM checkout.
 - Preserve captured board snapshots and original grades for audit; use corrected
