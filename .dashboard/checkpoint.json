@@ -1,21 +1,21 @@
 {
   "schema_version": 1,
   "project_id": "wnba_props",
-  "updated_at": "2026-10-23T02:06:06+00:00",
+  "updated_at": "2026-10-24T00:14:21+00:00",
   "status": "observing",
-  "summary": "Integrity audit 2026-10-22 (docs/INTEGRITY_AUDIT_2026-10-22.md): the grade headline was pooling 681 explicitly not-recommended rows (value no_value/thin/FAVORABLE/UNFAVORABLE), publishing -88.101u (-6.39%) over 1379 priced rows. Recommended record is 698 settled, 359-338-1, -20.781u, ROI -2.98%; excluded rows -67.319u (-9.89%), now reported once as labelled context. Three fixes: (1) 7e84f28 headline/report/market splits count is_recommended() rows only, recap prints 'Recommended:' plus an 'Excluded: N of M' line; (2) df65992 retired shadow_rollup.py + wnba_props/shadow/rollup.py + tests + the shadow-capture/grade units - the rollup globbed outputs/backtests/, which no writer ever created here (grade writer lives in the frozen ~/wnba_props_shadow tree, 0 shadow_projection_* snapshots exist), so it exited 0 having read nothing since 2026-09-12; (3) efbab6c labels outputs/grades/phase_summary.json with _provenance as a derived view of the ledger (it had drifted: docs quote 718 playoff plays vs the ledger's 754), 06256fd fixes the docs/timers tables. Price basis clean: 0 unit/price violations, 0 invalid American prices. No corrupt rows found (54 settled-unpriced, 4 VOID, 5 PENDING, 95 UNPRICED, and a 2026-09-24 bulk re-grade cluster, all documented not repaired). Ledger bytes unchanged (md5 f12edfd405bf60ec9042786a8e9c436d); 238 tests OK; no Discord message sent.",
+  "summary": "Evening check-in 2026-10-23: integrity-audit fixes holding (recommended-only headline, shadow rollup retired, phase_summary labeled derived); Game 4 one-off board armed for Sat 2026-10-24 12:00 ET.",
   "experiment": null,
-  "watching_for": "Game 4 Sat 2026-10-24 1pm ET board from the armed one-off; after it grades, read the recommended headline (overall.basis), not all_rows",
-  "next_action": "sports-wnba-forecast@finalsg4.timer is armed (Sat 2026-10-24 16:00Z -> @afternoon.service); verify the board fires and the 10:17Z grade recap shows the Recommended line with the Excluded context line",
+  "watching_for": null,
+  "next_action": null,
   "deployed": false,
-  "git_commit": "5b2d215",
+  "git_commit": "",
   "check_back": {
     "kind": "calendar",
     "label": "after Game 4 grades",
     "target": 2,
-    "baseline": "2026-10-23T02:06:06+00:00",
+    "baseline": "2026-10-24T00:14:21+00:00",
     "events": [],
-    "target_date": "2026-10-25",
+    "target_date": null,
     "monitoring": false
   },
   "docs": [
